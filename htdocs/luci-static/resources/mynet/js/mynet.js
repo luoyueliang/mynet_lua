@@ -20,24 +20,24 @@ function mnFetch(url, method, params, onOk, onErr) {
         opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
         if (params) {
             opts.body = Object.keys(params)
-                .map(function(k) {
+                .map(function (k) {
                     return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
                 }).join('&');
         }
     } else if (params) {
         var qs = Object.keys(params)
-            .map(function(k) {
+            .map(function (k) {
                 return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
             }).join('&');
         url += (url.indexOf('?') >= 0 ? '&' : '?') + qs;
     }
 
     fetch(url, opts)
-        .then(function(res) { return res.json(); })
-        .then(function(data) {
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
             if (onOk) onOk(data);
         })
-        .catch(function(err) {
+        .catch(function (err) {
             if (onErr) onErr(err.message || String(err));
         });
 }
@@ -56,10 +56,10 @@ function mnShowToast(msg, type) {
     if (!el) return;
 
     el.textContent = msg;
-    el.className   = 'mn-toast' + (type === 'error' ? ' mn-toast-error' : '');
+    el.className = 'mn-toast' + (type === 'error' ? ' mn-toast-error' : '');
 
     if (_toastTimer) clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function() {
+    _toastTimer = setTimeout(function () {
         el.classList.add('mn-hidden');
     }, 3500);
 }
@@ -80,7 +80,7 @@ function mnApi(action, params, btn) {
     var url = baseUrl + action;
 
     mnFetch(url, 'POST', params || {},
-        function(data) {
+        function (data) {
             if (btn) btn.disabled = false;
             if (data.success) {
                 mnShowToast(data.message || 'OK');
@@ -89,7 +89,7 @@ function mnApi(action, params, btn) {
                 mnShowToast((data.message || 'Error'), 'error');
             }
         },
-        function(err) {
+        function (err) {
             if (btn) btn.disabled = false;
             mnShowToast(err, 'error');
         }
@@ -106,7 +106,7 @@ function mnRefreshStatus() {
         .replace(/\/admin\/mynet.*$/, '/admin/mynet/api/status');
 
     mnFetch(baseUrl, 'GET', null,
-        function(data) {
+        function (data) {
             if (!data.success) return;
             _updateStatusDots(data.vpn_status === 'running');
         },
@@ -116,14 +116,14 @@ function mnRefreshStatus() {
 
 function _updateStatusDots(running) {
     var dots = document.querySelectorAll('.mn-dot');
-    dots.forEach(function(dot) {
+    dots.forEach(function (dot) {
         if (dot.closest('.mn-card-header')) {
             dot.className = 'mn-dot ' + (running ? 'mn-dot-green' : 'mn-dot-red');
         }
     });
 
     var labels = document.querySelectorAll('.mn-status-label strong, .mn-running, .mn-stopped');
-    labels.forEach(function(el) {
+    labels.forEach(function (el) {
         if (running) {
             el.className = 'mn-running';
         } else {

@@ -1,10 +1,10 @@
 {
-  "server_config": {
-    "api_base_url": "http://localhost:8000/api/v1",
-    "timeout": 30,
-    "retry_count": 3
-  },
-  "downloads": {
-    "apps_index_url": "https://download.mynet.club/apps.json"
-  }
+    "server_config": {
+        "api_base_url": "http://localhost:8000/api/v1",
+        "timeout": 30,
+        "retry_count": 3
+    },
+    "downloads": {
+        "apps_index_url": "https://download.mynet.club/apps.json"
+    }
 }

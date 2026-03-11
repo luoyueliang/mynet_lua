@@ -1,116 +1,138 @@
 <%+header%>
-<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+    <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
 
-<h2><%:Node Detail%> — <code><%=tostring(node_id)%></code></h2>
+    <h2>
+        <%:Node Detail%> — <code><%=tostring(node_id)%></code>
+    </h2>
 
-<% if conf_err then %>
-<div class="mn-alert mn-alert-error"><%:Config fetch error%>: <%=pcdata(conf_err)%></div>
-<% end %>
+    <% if conf_err then %>
+        <div class="mn-alert mn-alert-error">
+            <%:Config fetch error%>: <%=pcdata(conf_err)%>
+        </div>
+        <% end %>
 
-<div class="mn-grid">
+            <div class="mn-grid">
 
-  <!-- VPN 服务状态 -->
-  <div class="mn-card">
-    <div class="mn-card-header">
-      <span class="mn-dot <%=vpn_status=='running' and 'mn-dot-green' or 'mn-dot-red'%>"></span>
-      <h3><%:VPN Service%></h3>
-    </div>
-    <div class="mn-card-body">
-      <p><strong><%=pcdata(vpn_status)%></strong></p>
-      <% if vpn_iface then %>
-      <p><%:Interface%>: <code><%=pcdata(vpn_iface.interface)%></code>
-         &nbsp;·&nbsp; <%=pcdata(vpn_iface.state)%></p>
-      <% end %>
-    </div>
-    <div class="mn-card-actions">
-      <button class="mn-btn mn-btn-green"  onclick="mnApi('vpn_start',   null, this)"><%:Start%></button>
-      <button class="mn-btn mn-btn-red"    onclick="mnApi('vpn_stop',    null, this)"><%:Stop%></button>
-      <button class="mn-btn mn-btn-yellow" onclick="mnApi('vpn_restart', null, this)"><%:Restart%></button>
-    </div>
-  </div>
+                <!-- VPN 服务状态 -->
+                <div class="mn-card">
+                    <div class="mn-card-header">
+                        <span class="mn-dot <%=vpn_status=='running' and 'mn-dot-green' or 'mn-dot-red'%>"></span>
+                        <h3>
+                            <%:VPN Service%>
+                        </h3>
+                    </div>
+                    <div class="mn-card-body">
+                        <p><strong>
+                                <%=pcdata(vpn_status)%>
+                            </strong></p>
+                        <% if vpn_iface then %>
+                            <p>
+                                <%:Interface%>: <code><%=pcdata(vpn_iface.interface)%></code>
+                                    &nbsp;·&nbsp; <%=pcdata(vpn_iface.state)%>
+                            </p>
+                            <% end %>
+                    </div>
+                    <div class="mn-card-actions">
+                        <button class="mn-btn mn-btn-green" onclick="mnApi('vpn_start',   null, this)">
+                            <%:Start%>
+                        </button>
+                        <button class="mn-btn mn-btn-red" onclick="mnApi('vpn_stop',    null, this)">
+                            <%:Stop%>
+                        </button>
+                        <button class="mn-btn mn-btn-yellow" onclick="mnApi('vpn_restart', null, this)">
+                            <%:Restart%>
+                        </button>
+                    </div>
+                </div>
 
-  <!-- 配置同步 -->
-  <div class="mn-card">
-    <div class="mn-card-header"><h3><%:Config Sync%></h3></div>
-    <div class="mn-card-body">
-      <p class="mn-small mn-muted">
-        <%:Downloads node.conf and route.conf from the server.%>
-      </p>
-    </div>
-    <div class="mn-card-actions">
-      <button class="mn-btn" id="btn-refresh-cfg"
-          onclick="mnRefreshConfig(<%=tostring(node_id)%>, this)">
-        <%:Sync Configs%>
-      </button>
-    </div>
-    <div id="refresh-result" class="mn-hidden mn-small mn-muted"></div>
-  </div>
+                <!-- 配置同步 -->
+                <div class="mn-card">
+                    <div class="mn-card-header">
+                        <h3>
+                            <%:Config Sync%>
+                        </h3>
+                    </div>
+                    <div class="mn-card-body">
+                        <p class="mn-small mn-muted">
+                            <%:Downloads node.conf and route.conf from the server.%>
+                        </p>
+                    </div>
+                    <div class="mn-card-actions">
+                        <button class="mn-btn" id="btn-refresh-cfg"
+                            onclick="mnRefreshConfig(<%=tostring(node_id)%>, this)">
+                            <%:Sync Configs%>
+                        </button>
+                    </div>
+                    <div id="refresh-result" class="mn-hidden mn-small mn-muted"></div>
+                </div>
 
-</div><!-- .mn-grid -->
+            </div><!-- .mn-grid -->
 
-<!-- node.conf 预览 -->
-<div class="mn-section">
-  <div class="mn-section-header">
-    <h3>node.conf <span class="mn-muted mn-small">(rendered)</span></h3>
-    <button class="mn-btn mn-btn-sm mn-btn-secondary" onclick="mnToggle('pre-node-conf')">
-      <%:Toggle%>
-    </button>
-  </div>
-  <pre id="pre-node-conf" class="mn-pre mn-hidden"><%=pcdata(conf_text ~= "" and conf_text or "(empty)")%></pre>
-</div>
+            <!-- node.conf 预览 -->
+            <div class="mn-section">
+                <div class="mn-section-header">
+                    <h3>node.conf <span class="mn-muted mn-small">(rendered)</span></h3>
+                    <button class="mn-btn mn-btn-sm mn-btn-secondary" onclick="mnToggle('pre-node-conf')">
+                        <%:Toggle%>
+                    </button>
+                </div>
+                <pre id="pre-node-conf"
+                    class="mn-pre mn-hidden"><%=pcdata(conf_text ~= "" and conf_text or "(empty)")%></pre>
+            </div>
 
-<!-- route.conf 预览 -->
-<div class="mn-section">
-  <div class="mn-section-header">
-    <h3>route.conf <span class="mn-muted mn-small">(rendered)</span></h3>
-    <button class="mn-btn mn-btn-sm mn-btn-secondary" onclick="mnToggle('pre-route-conf')">
-      <%:Toggle%>
-    </button>
-  </div>
-  <pre id="pre-route-conf" class="mn-pre mn-hidden"><%=pcdata(route_text ~= "" and route_text or "(empty)")%></pre>
-</div>
+            <!-- route.conf 预览 -->
+            <div class="mn-section">
+                <div class="mn-section-header">
+                    <h3>route.conf <span class="mn-muted mn-small">(rendered)</span></h3>
+                    <button class="mn-btn mn-btn-sm mn-btn-secondary" onclick="mnToggle('pre-route-conf')">
+                        <%:Toggle%>
+                    </button>
+                </div>
+                <pre id="pre-route-conf"
+                    class="mn-pre mn-hidden"><%=pcdata(route_text ~= "" and route_text or "(empty)")%></pre>
+            </div>
 
-<div class="mn-actions-bar">
-  <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/mynet/nodes')%>">
-    ← <%:Back to Nodes%>
-  </a>
-</div>
+            <div class="mn-actions-bar">
+                <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/mynet/nodes')%>">
+                    ← <%:Back to Nodes%>
+                </a>
+            </div>
 
-<div id="mn-toast" class="mn-toast mn-hidden"></div>
+            <div id="mn-toast" class="mn-toast mn-hidden"></div>
 
-<script src="<%=resource%>/mynet/js/mynet.js"></script>
-<script>
-function mnRefreshConfig(nodeId, btn) {
-    btn.disabled = true;
-    btn.textContent = '<%:Syncing...%>';
-    var res = document.getElementById('refresh-result');
-    mnFetch('<%=luci.dispatcher.build_url("admin/mynet/api/node_config")%>',
-        'POST', { node_id: nodeId },
-        function(data) {
-            btn.disabled = false;
-            btn.textContent = '<%:Sync Configs%>';
-            if (data.success) {
-                var files = (data.files || []).join(', ');
-                mnShowToast('<%:Config synced%>: ' + files);
-                res.textContent = '✓ ' + files;
-            } else {
-                var errs = (data.errors || []).join('; ');
-                mnShowToast('<%:Sync failed%>: ' + errs, 'error');
-                res.textContent = '✗ ' + errs;
-            }
-            res.classList.remove('mn-hidden');
-        },
-        function(err) {
-            btn.disabled = false;
-            btn.textContent = '<%:Sync Configs%>';
-            mnShowToast(err, 'error');
-        }
-    );
-}
+            <script src="<%=resource%>/mynet/js/mynet.js"></script>
+            <script>
+                function mnRefreshConfig(nodeId, btn) {
+                    btn.disabled = true;
+                    btn.textContent = '<%:Syncing...%>';
+                    var res = document.getElementById('refresh-result');
+                    mnFetch('<%=luci.dispatcher.build_url("admin/mynet/api/node_config")%>',
+                        'POST', { node_id: nodeId },
+                        function (data) {
+                            btn.disabled = false;
+                            btn.textContent = '<%:Sync Configs%>';
+                            if (data.success) {
+                                var files = (data.files || []).join(', ');
+                                mnShowToast('<%:Config synced%>: ' + files);
+                                res.textContent = '✓ ' + files;
+                            } else {
+                                var errs = (data.errors || []).join('; ');
+                                mnShowToast('<%:Sync failed%>: ' + errs, 'error');
+                                res.textContent = '✗ ' + errs;
+                            }
+                            res.classList.remove('mn-hidden');
+                        },
+                        function (err) {
+                            btn.disabled = false;
+                            btn.textContent = '<%:Sync Configs%>';
+                            mnShowToast(err, 'error');
+                        }
+                    );
+                }
 
-function mnToggle(id) {
-    var el = document.getElementById(id);
-    if (el) el.classList.toggle('mn-hidden');
-}
-</script>
-<%+footer%>
+                function mnToggle(id) {
+                    var el = document.getElementById(id);
+                    if (el) el.classList.toggle('mn-hidden');
+                }
+            </script>
+            <%+footer%>

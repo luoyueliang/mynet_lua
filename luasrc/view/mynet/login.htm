@@ -1,45 +1,47 @@
 <%+header%>
-<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+    <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
 
-<div class="mn-login-wrap">
-  <div class="mn-login-box">
+    <div class="mn-login-wrap">
+        <div class="mn-login-box">
 
-    <div class="mn-login-logo">
-      <h2>MyNet VPN</h2>
-      <p class="mn-muted">OpenWrt Management</p>
+            <div class="mn-login-logo">
+                <h2>MyNet VPN</h2>
+                <p class="mn-muted">OpenWrt Management</p>
+            </div>
+
+            <% if error then %>
+                <div class="mn-alert mn-alert-error">
+                    <%=pcdata(error)%>
+                </div>
+                <% end %>
+
+                    <form method="post" action="<%=luci.dispatcher.build_url('admin/mynet/login')%>" class="mn-form">
+                        <div class="mn-form-group">
+                            <label for="email">
+                                <%:Email%>
+                            </label>
+                            <input type="email" id="email" name="email" value="<%=pcdata(prefill_email or '')%>"
+                                placeholder="user@example.com" autocomplete="username" required>
+                        </div>
+
+                        <div class="mn-form-group">
+                            <label for="password">
+                                <%:Password%>
+                            </label>
+                            <input type="password" id="password" name="password" autocomplete="current-password"
+                                required>
+                        </div>
+
+                        <button type="submit" class="mn-btn mn-btn-block">
+                            <%:Login%>
+                        </button>
+                    </form>
+
+                    <p class="mn-login-hint mn-muted">
+                        <%:Credentials are stored in%> <code>/etc/mynet/conf/credential.json</code>
+                    </p>
+
+        </div>
     </div>
 
-    <% if error then %>
-    <div class="mn-alert mn-alert-error">
-      <%=pcdata(error)%>
-    </div>
-    <% end %>
-
-    <form method="post" action="<%=luci.dispatcher.build_url('admin/mynet/login')%>" class="mn-form">
-      <div class="mn-form-group">
-        <label for="email"><%:Email%></label>
-        <input type="email" id="email" name="email"
-               value="<%=pcdata(prefill_email or '')%>"
-               placeholder="user@example.com"
-               autocomplete="username"
-               required>
-      </div>
-
-      <div class="mn-form-group">
-        <label for="password"><%:Password%></label>
-        <input type="password" id="password" name="password"
-               autocomplete="current-password"
-               required>
-      </div>
-
-      <button type="submit" class="mn-btn mn-btn-block"><%:Login%></button>
-    </form>
-
-    <p class="mn-login-hint mn-muted">
-      <%:Credentials are stored in%> <code>/etc/mynet/conf/credential.json</code>
-    </p>
-
-  </div>
-</div>
-
-<%+footer%>
+    <%+footer%>

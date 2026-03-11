@@ -1,78 +1,112 @@
 <%+header%>
-<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+    <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
 
-<h2><%:Select Zone%></h2>
+    <h2>
+        <%:Select Zone%>
+    </h2>
 
-<% if cur_zone and cur_zone.zone_id and cur_zone.zone_id ~= 0 then %>
-<div class="mn-alert mn-alert-info">
-  <%:Current zone%>: <strong><%=pcdata(cur_zone.zone_name)%></strong>
-  &nbsp;<span class="mn-muted">(ID: <%=tostring(cur_zone.zone_id)%>)</span>
-</div>
-<% end %>
-
-<% if error then %>
-<div class="mn-alert mn-alert-error"><%=pcdata(error)%></div>
-<% end %>
-
-<% if not zones or #zones == 0 then %>
-<div class="mn-empty">
-  <p><%:No zones available. Please check your account permissions.%></p>
-  <a class="mn-btn" href="<%=luci.dispatcher.build_url('admin/mynet/zones')%>"><%:Refresh%></a>
-</div>
-<% else %>
-
-<div class="mn-table-wrap">
-<table class="mn-table">
-  <thead>
-    <tr>
-      <th><%:Zone Name%></th>
-      <th><%:Zone ID%></th>
-      <th><%:Status%></th>
-      <th><%:Role%></th>
-      <th><%:Action%></th>
-    </tr>
-  </thead>
-  <tbody>
-  <% for _, z in ipairs(zones) do
-       local zid     = z.zone_id or z.id or 0
-       local zname   = z.zone_name or ""
-       local zstatus = (z.zone_status == 1) and "online" or "offline"
-       local is_admin = z.pivot and z.pivot.is_admin == 1
-       local is_cur   = tostring(zid) == tostring(cur_zone and cur_zone.zone_id or 0)
-  %>
-    <tr class="<%=is_cur and 'mn-row-active' or ''%>">
-      <td><strong><%=pcdata(zname)%></strong>
-          <% if is_cur then %> <span class="mn-badge mn-badge-green"><%:Active%></span><% end %>
-      </td>
-      <td class="mn-muted"><code><%=tostring(zid)%></code></td>
-      <td>
-        <span class="mn-dot <%=zstatus == 'online' and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
-        <%=zstatus%>
-      </td>
-      <td><%=is_admin and translate("Admin") or translate("Member")%></td>
-      <td>
-        <% if not is_cur then %>
-        <form method="post" action="<%=luci.dispatcher.build_url('admin/mynet/zones/select')%>" style="display:inline">
-          <input type="hidden" name="zone_id"   value="<%=tostring(zid)%>">
-          <input type="hidden" name="zone_name" value="<%=pcdata(zname)%>">
-          <button type="submit" class="mn-btn mn-btn-sm"><%:Select%></button>
-        </form>
-        <% else %>
-        <span class="mn-muted"><%:Selected%></span>
+    <% if cur_zone and cur_zone.zone_id and cur_zone.zone_id ~=0 then %>
+        <div class="mn-alert mn-alert-info">
+            <%:Current zone%>: <strong>
+                    <%=pcdata(cur_zone.zone_name)%>
+                </strong>
+                &nbsp;<span class="mn-muted">(ID: <%=tostring(cur_zone.zone_id)%>)</span>
+        </div>
         <% end %>
-      </td>
-    </tr>
-  <% end %>
-  </tbody>
-</table>
-</div>
 
-<% end %>
+            <% if error then %>
+                <div class="mn-alert mn-alert-error">
+                    <%=pcdata(error)%>
+                </div>
+                <% end %>
 
-<div class="mn-actions-bar">
-  <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/mynet/index')%>">
-    ← <%:Dashboard%>
-  </a>
-</div>
+                    <% if not zones or #zones==0 then %>
+                        <div class="mn-empty">
+                            <p>
+                                <%:No zones available. Please check your account permissions.%>
+                            </p>
+                            <a class="mn-btn" href="<%=luci.dispatcher.build_url('admin/mynet/zones')%>">
+                                <%:Refresh%>
+                            </a>
+                        </div>
+                        <% else %>
 
-<%+footer%>
+                            <div class="mn-table-wrap">
+                                <table class="mn-table">
+                                    <thead>
+                                        <tr>
+                                            <th>
+                                                <%:Zone Name%>
+                                            </th>
+                                            <th>
+                                                <%:Zone ID%>
+                                            </th>
+                                            <th>
+                                                <%:Status%>
+                                            </th>
+                                            <th>
+                                                <%:Role%>
+                                            </th>
+                                            <th>
+                                                <%:Action%>
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <% for _, z in ipairs(zones) do local zid=z.zone_id or z.id or 0 local
+                                            zname=z.zone_name or "" local zstatus=(z.zone_status==1) and "online"
+                                            or "offline" local is_admin=z.pivot and z.pivot.is_admin==1 local
+                                            is_cur=tostring(zid)==tostring(cur_zone and cur_zone.zone_id or 0) %>
+                                            <tr class="<%=is_cur and 'mn-row-active' or ''%>">
+                                                <td><strong>
+                                                        <%=pcdata(zname)%>
+                                                    </strong>
+                                                    <% if is_cur then %> <span class="mn-badge mn-badge-green">
+                                                            <%:Active%>
+                                                        </span>
+                                                        <% end %>
+                                                </td>
+                                                <td class="mn-muted"><code><%=tostring(zid)%></code></td>
+                                                <td>
+                                                    <span
+                                                        class="mn-dot <%=zstatus == 'online' and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
+                                                    <%=zstatus%>
+                                                </td>
+                                                <td>
+                                                    <%=is_admin and translate("Admin") or translate("Member")%>
+                                                </td>
+                                                <td>
+                                                    <% if not is_cur then %>
+                                                        <form method="post"
+                                                            action="<%=luci.dispatcher.build_url('admin/mynet/zones/select')%>"
+                                                            style="display:inline">
+                                                            <input type="hidden" name="zone_id"
+                                                                value="<%=tostring(zid)%>">
+                                                            <input type="hidden" name="zone_name"
+                                                                value="<%=pcdata(zname)%>">
+                                                            <button type="submit" class="mn-btn mn-btn-sm">
+                                                                <%:Select%>
+                                                            </button>
+                                                        </form>
+                                                        <% else %>
+                                                            <span class="mn-muted">
+                                                                <%:Selected%>
+                                                            </span>
+                                                            <% end %>
+                                                </td>
+                                            </tr>
+                                            <% end %>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <% end %>
+
+                                <div class="mn-actions-bar">
+                                    <a class="mn-btn mn-btn-secondary"
+                                        href="<%=luci.dispatcher.build_url('admin/mynet/index')%>">
+                                        ← <%:Dashboard%>
+                                    </a>
+                                </div>
+
+                                <%+footer%>
