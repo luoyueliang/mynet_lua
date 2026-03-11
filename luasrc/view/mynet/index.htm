@@ -1,0 +1,102 @@
+<%+header%>
+<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+
+<h2><%:MyNet VPN%> — <%:Dashboard%></h2>
+
+<% local running = (vpn_status == "running") %>
+
+<div class="mn-grid">
+
+  <!-- VPN 状态卡 -->
+  <div class="mn-card">
+    <div class="mn-card-header">
+      <span class="mn-dot <%=running and 'mn-dot-green' or 'mn-dot-red'%>"></span>
+      <h3><%:VPN Service%></h3>
+    </div>
+    <div class="mn-card-body">
+      <p class="mn-status-label">
+        <% if running then %>
+          <strong class="mn-running"><%:Running%></strong>
+        <% else %>
+          <strong class="mn-stopped"><%:Stopped%></strong>
+        <% end %>
+        <% if vpn_type and vpn_type ~= "" then %>
+          &nbsp;·&nbsp;<code><%=pcdata(vpn_type)%></code>
+        <% end %>
+      </p>
+      <% if vpn_iface then %>
+      <p><%:Interface%>: <code><%=pcdata(vpn_iface.interface)%></code>
+         &nbsp;·&nbsp; <%:State%>: <code><%=pcdata(vpn_iface.state)%></code>
+         <% if vpn_iface.mtu then %>&nbsp;·&nbsp; MTU: <%=vpn_iface.mtu%><% end %>
+      </p>
+      <% end %>
+    </div>
+    <div class="mn-card-actions">
+      <button class="mn-btn mn-btn-green"  onclick="mnApi('vpn_start',   null, this)"><%:Start%></button>
+      <button class="mn-btn mn-btn-red"    onclick="mnApi('vpn_stop',    null, this)"><%:Stop%></button>
+      <button class="mn-btn mn-btn-yellow" onclick="mnApi('vpn_restart', null, this)"><%:Restart%></button>
+    </div>
+  </div>
+
+  <!-- 当前区域 -->
+  <div class="mn-card">
+    <div class="mn-card-header"><h3><%:Zone%></h3></div>
+    <div class="mn-card-body">
+      <% if zone and zone.zone_id and zone.zone_id ~= 0 then %>
+        <p class="mn-zone-name"><%=pcdata(zone.zone_name)%></p>
+        <p class="mn-muted">ID: <%=tostring(zone.zone_id)%></p>
+      <% else %>
+        <p class="mn-hint"><%:No zone selected.%></p>
+      <% end %>
+    </div>
+    <div class="mn-card-actions">
+      <a class="mn-btn" href="<%=luci.dispatcher.build_url('admin/mynet/zones')%>">
+        <% if zone and zone.zone_id and zone.zone_id ~= 0 then %><%:Change Zone%><% else %><%:Select Zone%><% end %>
+      </a>
+    </div>
+  </div>
+
+  <!-- 当前节点 -->
+  <div class="mn-card">
+    <div class="mn-card-header"><h3><%:Node%></h3></div>
+    <div class="mn-card-body">
+      <% if node_id then %>
+        <p><%:Node ID%>: <code><%=tostring(node_id)%></code></p>
+      <% else %>
+        <p class="mn-hint"><%:Not configured in mynet.conf%></p>
+      <% end %>
+    </div>
+    <div class="mn-card-actions">
+      <% if node_id then %>
+      <a class="mn-btn" href="<%=luci.dispatcher.build_url('admin/mynet/nodes/detail?id=' .. tostring(node_id))%>">
+        <%:Node Detail%>
+      </a>
+      <% end %>
+      <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/mynet/nodes')%>">
+        <%:Nodes List%>
+      </a>
+    </div>
+  </div>
+
+  <!-- 账号 -->
+  <div class="mn-card">
+    <div class="mn-card-header"><h3><%:Account%></h3></div>
+    <div class="mn-card-body">
+      <p><% if user_email and user_email ~= "" then %><%=pcdata(user_email)%><% else %>—<% end %></p>
+    </div>
+    <div class="mn-card-actions">
+      <a class="mn-btn mn-btn-red" href="<%=luci.dispatcher.build_url('admin/mynet/logout')%>"><%:Logout%></a>
+      <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/mynet/status')%>"><%:Status%></a>
+    </div>
+  </div>
+
+</div><!-- .mn-grid -->
+
+<div id="mn-toast" class="mn-toast mn-hidden"></div>
+
+<script src="<%=resource%>/mynet/js/mynet.js"></script>
+<script>
+// 自动刷新 VPN 状态（每 15 秒）
+setInterval(function() { mnRefreshStatus(); }, 15000);
+</script>
+<%+footer%>

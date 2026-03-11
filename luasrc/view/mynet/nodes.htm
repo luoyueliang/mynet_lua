@@ -1,0 +1,102 @@
+<%+header%>
+<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+
+<h2><%:Nodes%>
+  <% if zone and zone.zone_name and zone.zone_name ~= "" then %>
+  <span class="mn-zone-badge"><%=pcdata(zone.zone_name)%></span>
+  <% end %>
+</h2>
+
+<% if error then %>
+<div class="mn-alert mn-alert-error"><%=pcdata(error)%></div>
+<% end %>
+
+<%
+-- 解包分页数据
+local node_list   = nodes_data and nodes_data.data or {}
+local total       = nodes_data and nodes_data.total or 0
+local per_page    = nodes_data and nodes_data.per_page or 20
+local cur_page    = nodes_data and nodes_data.current_page or page or 1
+local last_page   = nodes_data and nodes_data.last_page or 1
+%>
+
+<% if #node_list == 0 then %>
+<div class="mn-empty">
+  <p><%:No nodes found in this zone.%></p>
+</div>
+<% else %>
+
+<div class="mn-table-wrap">
+<table class="mn-table">
+  <thead>
+    <tr>
+      <th><%:Node Name%></th>
+      <th><%:Node ID%></th>
+      <th><%:Type%></th>
+      <th><%:Virtual IP%></th>
+      <th><%:Status%></th>
+      <th><%:Action%></th>
+    </tr>
+  </thead>
+  <tbody>
+  <% for _, n in ipairs(node_list) do
+       local nid     = n.node_id or n.id or 0
+       local nname   = n.node_name or n.name or ""
+       local vip     = n.virtual_ip or ""
+       local vtype   = n.vpn_type or ""
+       local nstatus = n.status or tostring(n.node_status or "")
+       local is_cur  = tostring(nid) == tostring(current_node_id or "")
+  %>
+    <tr class="<%=is_cur and 'mn-row-active' or ''%>">
+      <td>
+        <strong><%=pcdata(nname)%></strong>
+        <% if is_cur then %><span class="mn-badge mn-badge-blue"><%:Configured%></span><% end %>
+        <% if n.node_remarks and n.node_remarks ~= "" then %>
+        <br><span class="mn-muted mn-small"><%=pcdata(n.node_remarks)%></span>
+        <% end %>
+      </td>
+      <td class="mn-muted"><code><%=tostring(nid)%></code></td>
+      <td><span class="mn-badge"><%=pcdata(vtype)%></span></td>
+      <td><code><%=pcdata(vip)%></code></td>
+      <td>
+        <% local online = (nstatus == "online" or n.is_active) %>
+        <span class="mn-dot <%=online and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
+        <%=pcdata(nstatus)%>
+      </td>
+      <td>
+        <a class="mn-btn mn-btn-sm"
+           href="<%=luci.dispatcher.build_url('admin/mynet/nodes/detail?id=' .. tostring(nid))%>">
+          <%:Detail%>
+        </a>
+      </td>
+    </tr>
+  <% end %>
+  </tbody>
+</table>
+</div>
+
+<!-- 分页 -->
+<% if last_page > 1 then %>
+<div class="mn-pagination">
+  <% if cur_page > 1 then %>
+  <a class="mn-btn mn-btn-sm mn-btn-secondary"
+     href="<%=luci.dispatcher.build_url('admin/mynet/nodes?page=' .. tostring(cur_page-1))%>">‹</a>
+  <% end %>
+  <span class="mn-muted"><%=cur_page%> / <%=last_page%></span>
+  <% if cur_page < last_page then %>
+  <a class="mn-btn mn-btn-sm mn-btn-secondary"
+     href="<%=luci.dispatcher.build_url('admin/mynet/nodes?page=' .. tostring(cur_page+1))%>">›</a>
+  <% end %>
+</div>
+<% end %>
+
+<% end %><!-- end #node_list -->
+
+<div class="mn-actions-bar">
+  <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/mynet/index')%>">
+    ← <%:Dashboard%>
+  </a>
+  <span class="mn-muted"><%:Total%>: <%=total%></span>
+</div>
+
+<%+footer%>

@@ -1,0 +1,11 @@
+.DS_Store
+*.bak
+*.swp
+*.swo
+/bin/
+/build/
+/tmp/
+/logs/
+# Exclude local credential file from root/ overlay
+/root/etc/mynet/conf/credential.json
+/root/etc/mynet/conf/zone.json
