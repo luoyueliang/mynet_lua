@@ -107,7 +107,31 @@ fi
 
 rm -f "$TMP_NET"
 
-# ── 6. 保存架构信息供 start.sh 读取 ──────────────────────────
+# ── 6. 预写入 opkg 清华镜像源（downloads.openwrt.org 在国内被封）──
+echo "[setup] 预写入 opkg 清华镜像配置..."
+
+# armsr-armv8 架构对应 aarch64_generic 包
+PKG_ARCH="aarch64_generic"
+TUNA="https://mirrors.tuna.tsinghua.edu.cn/openwrt"
+OPKG_FEEDS="src/gz openwrt_core ${TUNA}/releases/${OPENWRT_VERSION}/targets/armsr/armv8/packages
+src/gz openwrt_base ${TUNA}/releases/${OPENWRT_VERSION}/packages/${PKG_ARCH}/base
+src/gz openwrt_luci ${TUNA}/releases/${OPENWRT_VERSION}/packages/${PKG_ARCH}/luci
+src/gz openwrt_packages ${TUNA}/releases/${OPENWRT_VERSION}/packages/${PKG_ARCH}/packages
+src/gz openwrt_routing ${TUNA}/releases/${OPENWRT_VERSION}/packages/${PKG_ARCH}/routing
+src/gz openwrt_telephony ${TUNA}/releases/${OPENWRT_VERSION}/packages/${PKG_ARCH}/telephony
+"
+TMP_FEEDS="$(mktemp)"
+printf '%s' "$OPKG_FEEDS" > "$TMP_FEEDS"
+
+if [[ -n "$PART2_START" ]]; then
+    debugfs -w -o offset=$OFFSET "$IMG" \
+        -R "write $TMP_FEEDS /etc/opkg/distfeeds.conf" 2>/dev/null && \
+        echo "[setup] opkg 清华镜像源已写入镜像 ✓" || \
+        echo "[setup] opkg 预写入失败，首次启动后运行 bash debug/fix-network.sh"
+fi
+rm -f "$TMP_FEEDS"
+
+# ── 7. 保存架构信息供 start.sh 读取 ──────────────────────────
 echo "$HOST_ARCH" > "$SCRIPT_DIR/.host_arch"
 echo "$IMG" > "$SCRIPT_DIR/.img_name"
 
