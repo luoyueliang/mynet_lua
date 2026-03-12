@@ -54,10 +54,12 @@ if [[ "$HOST_ARCH" == "arm64" ]]; then
         -m 256M
         -drive "if=pflash,file=${EFI_CODE},format=raw,readonly=on"
         -drive "file=$SCRIPT_DIR/$IMG,format=raw,if=virtio"
+        -device virtio-rng-pci
         -nographic
-        -serial mon:stdio
+        -serial "tcp::4444,server,nowait"
+        -monitor "unix:$SCRIPT_DIR/qemu-mon.sock,server,nowait"
         -net nic,model=virtio
-        -net "user,hostfwd=tcp::2222-:22,hostfwd=tcp::8080-:80"
+        -net "user,hostfwd=tcp::2222-10.0.2.15:22,hostfwd=tcp::8080-10.0.2.15:80"
     )
 else
     # Intel Mac：x86_64 虚拟机
@@ -66,10 +68,12 @@ else
         qemu-system-x86_64
         -drive "file=$SCRIPT_DIR/$IMG,format=raw,if=virtio"
         -m 256M
+        -device virtio-rng-pci
         -nographic
-        -serial mon:stdio
+        -serial "tcp::4444,server,nowait"
+        -monitor "unix:$SCRIPT_DIR/qemu-mon.sock,server,nowait"
         -net nic,model=virtio
-        -net "user,hostfwd=tcp::2222-:22,hostfwd=tcp::8080-:80"
+        -net "user,hostfwd=tcp::2222-10.0.2.15:22,hostfwd=tcp::8080-10.0.2.15:80"
     )
 fi
 
