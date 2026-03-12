@@ -7,3 +7,7 @@
 # QEMU 运行时
 *.pid
 *.log
+
+# setup.sh 生成的架构/镜像状态文件
+.host_arch
+.img_name

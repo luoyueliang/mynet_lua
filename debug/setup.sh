@@ -1,13 +1,32 @@
 #!/usr/bin/env bash
 # setup.sh — 一次性初始化：安装 QEMU、下载 OpenWrt 镜像并解压
 # 用法: bash debug/setup.sh
+#
+# 自动检测宿主机架构：
+#   Apple Silicon (arm64) → armvirt-64 镜像 + qemu-system-aarch64 + HVF 硬件加速
+#   Intel Mac  (x86_64)  → x86-64    镜像 + qemu-system-x86_64
 
 set -euo pipefail
 
 OPENWRT_VERSION="23.05.5"
-IMG_GZ="openwrt-${OPENWRT_VERSION}-x86-64-generic-ext4-combined.img.gz"
-IMG="openwrt-${OPENWRT_VERSION}-x86-64-generic-ext4-combined.img"
-BASE_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/x86/64"
+
+# 检测宿主机架构
+HOST_ARCH="$(uname -m)"
+if [[ "$HOST_ARCH" == "arm64" ]]; then
+    # Apple Silicon — 使用 armvirt-64，HVF 加速，接近原生速度
+    TARGET="armvirt-64"
+    IMG_GZ="openwrt-${OPENWRT_VERSION}-armvirt-64-generic-ext4-combined.img.gz"
+    IMG="openwrt-${OPENWRT_VERSION}-armvirt-64-generic-ext4-combined.img"
+    BASE_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/armvirt/64"
+    echo "[setup] 检测到 Apple Silicon (arm64)，使用 armvirt-64 镜像 + HVF 加速"
+else
+    # Intel Mac — 使用 x86-64
+    TARGET="x86-64"
+    IMG_GZ="openwrt-${OPENWRT_VERSION}-x86-64-generic-ext4-combined.img.gz"
+    IMG="openwrt-${OPENWRT_VERSION}-x86-64-generic-ext4-combined.img"
+    BASE_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/x86/64"
+    echo "[setup] 检测到 Intel Mac (x86_64)，使用 x86-64 镜像"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -42,6 +61,10 @@ if command -v qemu-img &>/dev/null; then
     qemu-img resize "$IMG" 512M 2>/dev/null || true
 fi
 
+# 保存架构信息供 start.sh 读取
+echo "$HOST_ARCH" > "$SCRIPT_DIR/.host_arch"
+echo "$IMG" > "$SCRIPT_DIR/.img_name"
+
 echo ""
-echo "[setup] 完成！镜像：$SCRIPT_DIR/$IMG"
+echo "[setup] 完成！目标架构: $TARGET，镜像：$SCRIPT_DIR/$IMG"
 echo "        现在可以运行: bash debug/start.sh"

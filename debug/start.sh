@@ -11,14 +11,20 @@
 
 set -euo pipefail
 
-OPENWRT_VERSION="23.05.5"
-IMG="openwrt-${OPENWRT_VERSION}-x86-64-generic-ext4-combined.img"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$SCRIPT_DIR/qemu.pid"
 
+# 读取 setup.sh 记录的架构和镜像名
+if [[ -f "$SCRIPT_DIR/.img_name" ]]; then
+    IMG=$(cat "$SCRIPT_DIR/.img_name")
+    HOST_ARCH=$(cat "$SCRIPT_DIR/.host_arch" 2>/dev/null || uname -m)
+else
+    echo "[start] 未找到镜像信息，请先运行: bash debug/setup.sh"
+    exit 1
+fi
+
 if [[ ! -f "$SCRIPT_DIR/$IMG" ]]; then
-    echo "[start] 镜像不存在，请先运行: bash debug/setup.sh"
+    echo "[start] 镜像不存在: $IMG，请先运行: bash debug/setup.sh"
     exit 1
 fi
 
@@ -30,15 +36,35 @@ if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     exit 0
 fi
 
-QEMU_ARGS=(
-    qemu-system-x86_64
-    -drive "file=$SCRIPT_DIR/$IMG,format=raw,if=virtio"
-    -m 256M
-    -nographic
-    -serial mon:stdio
-    -net nic,model=virtio
-    -net "user,hostfwd=tcp::2222-:22,hostfwd=tcp::8080-:80"
-)
+# 根据架构选择 QEMU 命令和加速器
+if [[ "$HOST_ARCH" == "arm64" ]]; then
+    # Apple Silicon：aarch64 虚拟机 + HVF 硬件加速（接近原生速度）
+    echo "[start] 使用 qemu-system-aarch64 + HVF 加速 (Apple Silicon)"
+    QEMU_ARGS=(
+        qemu-system-aarch64
+        -machine virt
+        -cpu host
+        -accel hvf
+        -drive "file=$SCRIPT_DIR/$IMG,format=raw,if=virtio"
+        -m 256M
+        -nographic
+        -serial mon:stdio
+        -net nic,model=virtio
+        -net "user,hostfwd=tcp::2222-:22,hostfwd=tcp::8080-:80"
+    )
+else
+    # Intel Mac：x86_64 虚拟机
+    echo "[start] 使用 qemu-system-x86_64 (Intel Mac)"
+    QEMU_ARGS=(
+        qemu-system-x86_64
+        -drive "file=$SCRIPT_DIR/$IMG,format=raw,if=virtio"
+        -m 256M
+        -nographic
+        -serial mon:stdio
+        -net nic,model=virtio
+        -net "user,hostfwd=tcp::2222-:22,hostfwd=tcp::8080-:80"
+    )
+fi
 
 if [[ "${1:-}" == "-fg" ]]; then
     echo "[start] 前台启动 OpenWrt QEMU ..."
