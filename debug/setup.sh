@@ -13,12 +13,12 @@ OPENWRT_VERSION="23.05.5"
 # 检测宿主机架构
 HOST_ARCH="$(uname -m)"
 if [[ "$HOST_ARCH" == "arm64" ]]; then
-    # Apple Silicon — 使用 armvirt-64，HVF 加速，接近原生速度
-    TARGET="armvirt-64"
-    IMG_GZ="openwrt-${OPENWRT_VERSION}-armvirt-64-generic-ext4-combined.img.gz"
-    IMG="openwrt-${OPENWRT_VERSION}-armvirt-64-generic-ext4-combined.img"
-    BASE_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/armvirt/64"
-    echo "[setup] 检测到 Apple Silicon (arm64)，使用 armvirt-64 镜像 + HVF 加速"
+    # Apple Silicon — 使用 armsr-armv8（OpenWrt 23.05+ ARM64 正式目标）+ HVF 加速
+    TARGET="armsr-armv8"
+    IMG_GZ="openwrt-${OPENWRT_VERSION}-armsr-armv8-generic-ext4-combined.img.gz"
+    IMG="openwrt-${OPENWRT_VERSION}-armsr-armv8-generic-ext4-combined.img"
+    BASE_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/armsr/armv8"
+    echo "[setup] 检测到 Apple Silicon (arm64)，使用 armsr-armv8 镜像 + HVF 加速"
 else
     # Intel Mac — 使用 x86-64
     TARGET="x86-64"

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env bash -x
 # start.sh — 启动 OpenWrt QEMU 虚拟机
 #
 # 端口映射（宿主机 → 虚拟机）：
@@ -38,15 +38,22 @@ fi
 
 # 根据架构选择 QEMU 命令和加速器
 if [[ "$HOST_ARCH" == "arm64" ]]; then
-    # Apple Silicon：aarch64 虚拟机 + HVF 硬件加速（接近原生速度）
-    echo "[start] 使用 qemu-system-aarch64 + HVF 加速 (Apple Silicon)"
+    # Apple Silicon: armsr-armv8 使用 GRUB EFI 引导，需要 edk2 固件
+    EFI_CODE="/opt/homebrew/share/qemu/edk2-aarch64-code.fd"
+    if [[ ! -f "$EFI_CODE" ]]; then
+        echo "[start] 找不到 EFI 固件: $EFI_CODE"
+        echo "        请先运行: brew install qemu"
+        exit 1
+    fi
+    echo "[start] 使用 qemu-system-aarch64 + HVF + EFI (Apple Silicon, armsr-armv8)"
     QEMU_ARGS=(
         qemu-system-aarch64
         -machine virt
         -cpu host
         -accel hvf
-        -drive "file=$SCRIPT_DIR/$IMG,format=raw,if=virtio"
         -m 256M
+        -drive "if=pflash,file=${EFI_CODE},format=raw,readonly=on"
+        -drive "file=$SCRIPT_DIR/$IMG,format=raw,if=virtio"
         -nographic
         -serial mon:stdio
         -net nic,model=virtio
