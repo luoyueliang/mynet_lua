@@ -1,0 +1,9 @@
+# OpenWrt 镜像文件（体积大，不入库）
+*.img
+*.img.gz
+*.vmdk
+*.qcow2
+
+# QEMU 运行时
+*.pid
+*.log

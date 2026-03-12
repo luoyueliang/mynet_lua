@@ -1,0 +1,57 @@
+# ==============================================================================
+# 架构映射列表 - 唯一真实来源 (Single Source of Truth)
+# ==============================================================================
+# 
+# 格式: uname_m|fpu_type|arch|goarch|goarm
+#
+# 字段说明:
+# - uname_m:   `uname -m` 返回的系统架构名称
+# - fpu_type:  FPU 类型 (hard/soft/none), none 表示不区分
+# - arch:      统一的架构标识(用于所有组件的文件名匹配)
+# - goarch:    Go 的 GOARCH 环境变量
+# - goarm:     Go 的 GOARM 环境变量(仅 ARM 32位需要,其他为空)
+#
+# 命名规范:
+# 1. 默认是 hard-float,不加后缀: armv7, arm64, mipsel
+# 2. soft-float 才加后缀: armv7-softfp, arm64-softfp, mipsel-softfp
+# 3. 所有组件都使用同一个 arch 标识
+#
+# 统一文件命名格式: {app}_{os}_{arch}_{version}.tgz
+# - MyNet:     mynet_linux_armv7_v1.0.0.tgz
+# - GNB:       gnb_linux_armv7_v1.6.0.a.tgz  
+# - WireGuard: wireguard_linux_armv7_v1.0.0.tgz
+# - jq:        jq_linux_armv7_v1.6.tgz
+# ==============================================================================
+
+# x86 系列
+x86_64|none|amd64|amd64|
+amd64|none|amd64|amd64|
+i386|none|i386|386|
+i686|none|i386|386|
+
+# ARM 64-bit
+arm64|hard|arm64|arm64|
+arm64|soft|arm64-softfp|arm64|
+aarch64|hard|arm64|arm64|
+aarch64|soft|arm64-softfp|arm64|
+
+# ARM 32-bit (v7 only, v6 removed - too old)
+armv7l|hard|armv7|arm|7
+armv7l|soft|armv7-softfp|arm|7
+
+# MIPS 64-bit
+
+# MIPS 64位
+mips64|none|mips64|mips64|
+mips64el|none|mips64el|mips64le|
+
+# MIPS 32位 BE
+mips|hard|mips|mips|
+mips|soft|mips-softfp|mips|
+
+# MIPS 32位 LE (uname 返回 mipsel, Go 使用 mipsle)
+mipsel|hard|mipsel|mipsle|
+mipsel|soft|mipsel-softfp|mipsle|
+
+# RISC-V 64位
+riscv64|none|riscv64|riscv64|
