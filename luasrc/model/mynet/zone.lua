@@ -47,7 +47,7 @@ end
 function M.find_zone(zones, zone_id)
     for _, z in ipairs(zones or {}) do
         local zid = z.zone_id or z.id
-        if tostring(zid) == tostring(zone_id) then
+        if util.int_str(zid) == util.int_str(zone_id) then
             return z
         end
     end

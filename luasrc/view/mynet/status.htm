@@ -5,15 +5,14 @@
         <%:System Status%>
     </h2>
 
-    <% -- 格式化字节数 local function fmt_bytes(n) n=tonumber(n) or 0 if n>= 1073741824 then return string.format("%.2f GB",
-        n/1073741824) end
-        if n >= 1048576 then return string.format("%.2f MB", n/1048576) end
-        if n >= 1024 then return string.format("%.2f KB", n/1024) end
+    <% local function fmt_bytes(n)
+        n = tonumber(n) or 0
+        if n >= 1073741824 then return string.format("%.2f GB", n/1073741824) end
+        if n >= 1048576    then return string.format("%.2f MB", n/1048576) end
+        if n >= 1024       then return string.format("%.2f KB", n/1024) end
         return tostring(n) .. " B"
-        end
-
-        -- 格式化运行时间
-        local function fmt_uptime(secs)
+    end %>
+    <% local function fmt_uptime(secs)
         local s = tonumber(secs) or 0
         local d = math.floor(s / 86400)
         local h = math.floor((s % 86400) / 3600)
@@ -21,8 +20,7 @@
         if d > 0 then return string.format("%dd %dh %dm", d, h, m) end
         if h > 0 then return string.format("%dh %dm", h, m) end
         return string.format("%dm", m)
-        end
-        %>
+    end %>
 
         <div class="mn-grid">
 
@@ -55,7 +53,7 @@
                                 <th>
                                     <%:Node ID%>
                                 </th>
-                                <td><code><%=tostring(node_id)%></code></td>
+                                <td><code><%= type(node_id)=="number" and string.format("%.0f",node_id) or tostring(node_id or "") %></code></td>
                             </tr>
                             <% end %>
                                 <% if vpn_iface then %>
@@ -163,7 +161,7 @@
                     </h3>
                 </div>
                 <div class="mn-card-body">
-                    <% if zone and zone.zone_id and zone.zone_id ~=0 then %>
+                    <% if zone and zone.zone_id and tostring(zone.zone_id) ~= "0" then %>
                         <table class="mn-kv">
                             <tr>
                                 <th>
@@ -175,7 +173,7 @@
                             </tr>
                             <tr>
                                 <th>ID</th>
-                                <td><code><%=tostring(zone.zone_id)%></code></td>
+                                <td><code><%= type(zone.zone_id)=="number" and string.format("%.0f",zone.zone_id) or tostring(zone.zone_id) %></code></td>
                             </tr>
                         </table>
                         <% else %>
@@ -189,7 +187,7 @@
         </div><!-- .mn-grid -->
 
         <div class="mn-actions-bar">
-            <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/mynet/index')%>">
+            <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>">
                 ← <%:Dashboard%>
             </a>
             <button class="mn-btn" onclick="location.reload()">

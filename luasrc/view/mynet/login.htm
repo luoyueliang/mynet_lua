@@ -9,13 +9,13 @@
                 <p class="mn-muted">OpenWrt Management</p>
             </div>
 
-            <% if error then %>
+            <% if login_error then %>
                 <div class="mn-alert mn-alert-error">
-                    <%=pcdata(error)%>
+                    <%=pcdata(login_error)%>
                 </div>
                 <% end %>
 
-                    <form method="post" action="<%=luci.dispatcher.build_url('admin/mynet/login')%>" class="mn-form">
+                    <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/login')%>" class="mn-form">
                         <div class="mn-form-group">
                             <label for="email">
                                 <%:Email%>
@@ -39,6 +39,11 @@
 
                     <p class="mn-login-hint mn-muted">
                         <%:Credentials are stored in%> <code>/etc/mynet/conf/credential.json</code>
+                    </p>
+
+                    <p class="mn-login-hint mn-muted">
+                        <%:No account?%>
+                        <a href="https://mynet.club/register" target="_blank" rel="noopener"><%:Register at mynet.club%></a>
                     </p>
 
         </div>

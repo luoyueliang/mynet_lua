@@ -74,8 +74,9 @@ local function auth_headers(token, zone_id)
     if token and token ~= "" then
         h["Authorization"] = "Bearer " .. token
     end
-    if zone_id and zone_id ~= 0 then
-        h["X-Zone-ID"] = tostring(zone_id)
+    local zid = tostring(zone_id or "")
+    if zid ~= "" and zid ~= "0" then
+        h["X-Zone-ID"] = zid
     end
     return h
 end

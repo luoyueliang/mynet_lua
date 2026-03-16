@@ -1,0 +1,284 @@
+<%+header%>
+<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+
+<h2><%:Setup Wizard%></h2>
+
+<p class="mn-muted">
+    <%:Logged in as%> <strong><%=pcdata(user_email or "")%></strong>
+    &nbsp;·&nbsp;
+    <a href="<%=luci.dispatcher.build_url('admin/services/mynet/logout')%>"><%:Logout%></a>
+    &nbsp;·&nbsp;
+    <a href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>"><%:Dashboard%></a>
+</p>
+
+<%
+local active_tab = active_tab or "account"
+if active_tab ~= "account" and active_tab ~= "zone" and active_tab ~= "node" then
+    active_tab = "account"
+end
+local base_url = luci.dispatcher.build_url('admin/services/mynet/wizard')
+local has_zone = zone and tostring(zone.zone_id) ~= "0"
+local has_node = (node_id ~= nil)
+%>
+
+<div class="mn-tabs">
+    <div class="mn-tab-nav">
+        <a class="mn-tab-btn<%=active_tab=='account' and ' active' or ''%>" href="<%=base_url%>?tab=account">
+            <%:Account%><span class="mn-tab-badge"></span>
+        </a>
+        <a class="mn-tab-btn<%=active_tab=='zone' and ' active' or ''%>" href="<%=base_url%>?tab=zone">
+            <%:Zone%>
+<%
+if has_zone then
+%>
+            <span class="mn-tab-badge"></span>
+<%
+else
+%>
+            <span class="mn-tab-badge pending"></span>
+<%
+end
+%>
+        </a>
+        <a class="mn-tab-btn<%=active_tab=='node' and ' active' or ''%>" href="<%=base_url%>?tab=node">
+            <%:Node%>
+<%
+if has_node then
+%>
+            <span class="mn-tab-badge"></span>
+<%
+else
+%>
+            <span class="mn-tab-badge pending"></span>
+<%
+end
+%>
+        </a>
+    </div>
+
+    <!-- Account Tab -->
+    <div class="mn-tab-panel<%=active_tab=='account' and ' active' or ''%>">
+        <div class="mn-card">
+            <div class="mn-card-header"><h3><%:Account Status%></h3></div>
+            <div class="mn-card-body">
+                <table class="mn-kv">
+                    <tr><th><%:Email%></th><td><strong><%=pcdata(user_email or "")%></strong></td></tr>
+                    <tr><th><%:Token%></th><td><span class="mn-badge mn-badge-green"><%:Valid%></span></td></tr>
+                </table>
+            </div>
+            <div class="mn-card-actions">
+                <a href="<%=luci.dispatcher.build_url('admin/services/mynet/logout')%>" class="mn-btn mn-btn-secondary"><%:Logout%></a>
+                <a href="<%=base_url%>?tab=zone" class="mn-btn"><%:Next: Select Zone%> &rarr;</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zone Tab -->
+    <div class="mn-tab-panel<%=active_tab=='zone' and ' active' or ''%>">
+<%
+if zone_fetch_error then
+%>
+        <div class="mn-alert mn-alert-error"><%=pcdata(zone_fetch_error)%></div>
+<%
+end
+if has_zone then
+%>
+        <div class="mn-alert mn-alert-success">
+            <%:Current zone%>: <strong><%=pcdata(zone.zone_name or "")%></strong>
+            &nbsp;<span class="mn-muted">(ID: <%=pcdata(tostring(zone.zone_id))%>)</span>
+        </div>
+<%
+end
+if zones and #zones > 0 then
+%>
+        <div class="mn-table-wrap">
+            <table class="mn-table">
+                <thead><tr><th><%:Zone Name%></th><th><%:Zone ID%></th><th><%:Action%></th></tr></thead>
+                <tbody>
+<%
+    for _, z in ipairs(zones) do
+        local zid = z.zone_id or z.id or 0
+        local zname = z.zone_name or z.name or ""
+        local zid_str = type(zid)=="number" and string.format("%.0f",zid) or tostring(zid)
+        local cur_zid = zone and tostring(zone.zone_id) or "0"
+        local is_cur = zid_str == cur_zid and cur_zid ~= "0"
+%>
+                    <tr class="<%=is_cur and 'mn-row-active' or ''%>">
+                        <td>
+                            <strong><%=pcdata(zname)%></strong>
+<%
+        if is_cur then
+%>
+                            <span class="mn-badge mn-badge-green">&#10003; <%:Selected%></span>
+<%
+        end
+%>
+                        </td>
+                        <td class="mn-muted"><code><%=zid_str%></code></td>
+                        <td>
+                            <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/zones/select')%>" style="display:inline">
+                                <input type="hidden" name="zone_id"     value="<%=zid_str%>">
+                                <input type="hidden" name="zone_name"   value="<%=pcdata(zname)%>">
+                                <input type="hidden" name="redirect_to" value="<%=base_url%>?tab=node">
+                                <button type="submit" class="mn-btn mn-btn-sm<%=is_cur and ' mn-btn-secondary' or ''%>">
+                                    <%=is_cur and "Selected" or "Select"%>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+<%
+    end
+%>
+                </tbody>
+            </table>
+        </div>
+<%
+else
+%>
+        <div class="mn-empty">
+            <p class="mn-muted"><%:No zones found. Check your connection.%></p>
+        </div>
+<%
+end
+%>
+        <div class="mn-actions-bar">
+            <a href="<%=base_url%>?tab=account" class="mn-btn mn-btn-secondary">&larr; <%:Account%></a>
+<%
+if has_zone then
+%>
+            <a href="<%=base_url%>?tab=node" class="mn-btn"><%:Next: Configure Node%> &rarr;</a>
+<%
+end
+%>
+        </div>
+    </div>
+
+    <!-- Node Tab -->
+    <div class="mn-tab-panel<%=active_tab=='node' and ' active' or ''%>">
+<%
+if not has_zone then
+%>
+        <div class="mn-alert mn-alert-warn">
+            <%:Please select a zone first.%>
+            <a href="<%=base_url%>?tab=zone"><%:Select Zone%></a>
+        </div>
+<%
+else
+    if node_fetch_error then
+%>
+        <div class="mn-alert mn-alert-error"><%=pcdata(node_fetch_error)%></div>
+<%
+    end
+    if has_node then
+%>
+        <div class="mn-alert mn-alert-success">
+            <%:Current node ID%>: <strong><%=type(node_id)=="number" and string.format("%.0f",node_id) or tostring(node_id)%></strong>
+        </div>
+<%
+    end
+    local node_list = nodes_data and nodes_data.data or {}
+    if #node_list > 0 then
+%>
+        <div class="mn-table-wrap">
+            <table class="mn-table">
+                <thead>
+                    <tr>
+                        <th><%:Node Name%></th>
+                        <th><%:Node ID%></th>
+                        <th><%:Virtual IP%></th>
+                        <th><%:Status%></th>
+                        <th><%:Action%></th>
+                    </tr>
+                </thead>
+                <tbody>
+<%
+        for _, n in ipairs(node_list) do
+            local nid = n.node_id or n.id or 0
+            local nname = n.node_name or n.name or ""
+            local vip   = n.virtual_ip or ""
+            local nst   = n.status or tostring(n.node_status or "")
+            local nid_str = type(nid)=="number" and string.format("%.0f",nid) or tostring(nid)
+            local cid_str = type(node_id)=="number" and string.format("%.0f",node_id) or tostring(node_id or "")
+            local is_cur = nid_str == cid_str and cid_str ~= "" and cid_str ~= "0"
+            local online = (nst == "online" or n.is_active)
+%>
+                    <tr class="<%=is_cur and 'mn-row-active' or ''%>">
+                        <td>
+                            <strong><%=pcdata(nname)%></strong>
+<%
+            if is_cur then
+%>
+                            <span class="mn-badge mn-badge-blue"><%:Configured%></span>
+<%
+            end
+%>
+                        </td>
+                        <td class="mn-muted"><code><%=nid_str%></code></td>
+                        <td><code><%=pcdata(vip)%></code></td>
+                        <td>
+                            <span class="mn-dot <%=online and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
+                            <%=pcdata(nst)%>
+                        </td>
+                        <td>
+                            <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/wizard/select_node')%>" style="display:inline">
+                                <input type="hidden" name="node_id" value="<%=nid_str%>">
+                                <button type="submit" class="mn-btn mn-btn-sm<%=is_cur and ' mn-btn-secondary' or ''%>">
+                                    <%=is_cur and "Reconfigure" or "Use This Node"%>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+<%
+        end
+%>
+                </tbody>
+            </table>
+        </div>
+<%
+        local last_pg = (nodes_data and nodes_data.last_page)    or 1
+        local cur_pg  = (nodes_data and nodes_data.current_page) or 1
+        if last_pg > 1 then
+%>
+        <div class="mn-pagination">
+<%
+            if cur_pg > 1 then
+%>
+            <a class="mn-btn mn-btn-sm mn-btn-secondary" href="<%=base_url%>?tab=node&page=<%=cur_pg-1%>">&#8249;</a>
+<%
+            end
+%>
+            <span class="mn-muted"><%=cur_pg%> / <%=last_pg%></span>
+<%
+            if cur_pg < last_pg then
+%>
+            <a class="mn-btn mn-btn-sm mn-btn-secondary" href="<%=base_url%>?tab=node&page=<%=cur_pg+1%>">&#8250;</a>
+<%
+            end
+%>
+        </div>
+<%
+        end
+    else
+%>
+        <div class="mn-empty">
+            <p class="mn-muted"><%:No nodes found in this zone.%></p>
+        </div>
+<%
+    end
+end
+%>
+        <div class="mn-actions-bar">
+            <a href="<%=base_url%>?tab=zone" class="mn-btn mn-btn-secondary">&larr; <%:Zone%></a>
+<%
+if has_node then
+%>
+            <a href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>" class="mn-btn"><%:Go to Dashboard%> &rarr;</a>
+<%
+end
+%>
+        </div>
+    </div>
+
+</div>
+
+<%+footer%>

@@ -42,14 +42,14 @@ function M.login(email, password)
     local user_info  = data.data.user or {}
 
     local new_cred = {
-        user_id       = user_info.id    or user_info.user_id or 0,
+        user_id       = util.int_str(user_info.user_id or user_info.id or 0),
         user_email    = email,
         token         = data.data.auth_token,
         refresh_token = data.data.refresh_token or "",
         machine_id    = machine_id,
         created_at    = util.format_time(now),
         expires_at    = util.format_time(now + expires_in),
-        zone_id       = user_info.zone_id or 0,
+        zone_id       = util.int_str(user_info.zone_id or 0),
     }
 
     local ok, save_err = cred.save(new_cred)

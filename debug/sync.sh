@@ -11,63 +11,73 @@
 
 set -euo pipefail
 
-ROUTER="root@localhost"
-PORT=2222
-SSH_OPTS="-p $PORT -o StrictHostKeyChecking=no -o ConnectTimeout=5"
-SCP_OPTS="-P $PORT -o StrictHostKeyChecking=no"
+ROUTER="openwrt-qemu"
+SSH_OPTS="-o ConnectTimeout=5"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# 上传单个文件（使用旧协议 SCP ，不依赖 sftp-server）
+# 用法: ssh_put <本地路径> <远端路径>
+ssh_put() {
+    local src="$1" dst="$2"
+    scp -O $SSH_OPTS "$src" "$ROUTER:$dst"
+}
+
 # 检查连通性
 if ! ssh $SSH_OPTS $ROUTER "true" 2>/dev/null; then
-    echo "[sync] 无法连接 $ROUTER:$PORT"
+    echo "[sync] 无法连接 $ROUTER"
     echo "       请先运行: bash debug/start.sh"
     exit 1
 fi
 
 sync_controller() {
     echo "[sync] controller ..."
-    scp $SCP_OPTS \
-        "$PROJECT_DIR/luasrc/controller/mynet.lua" \
-        $ROUTER:/usr/lib/lua/luci/controller/
+    ssh_put "$PROJECT_DIR/luasrc/controller/mynet.lua" \
+            "/usr/lib/lua/luci/controller/mynet.lua"
 }
 
 sync_model() {
     echo "[sync] model ..."
     ssh $SSH_OPTS $ROUTER "mkdir -p /usr/lib/lua/luci/model/mynet"
-    scp $SCP_OPTS \
-        "$PROJECT_DIR/luasrc/model/mynet/"*.lua \
-        $ROUTER:/usr/lib/lua/luci/model/mynet/
+    for f in "$PROJECT_DIR/luasrc/model/mynet/"*.lua; do
+        ssh_put "$f" "/usr/lib/lua/luci/model/mynet/$(basename "$f")"
+    done
 }
 
 sync_view() {
     echo "[sync] view ..."
-    ssh $SSH_OPTS $ROUTER "mkdir -p /usr/share/luci/view/mynet"
-    scp $SCP_OPTS \
-        "$PROJECT_DIR/luasrc/view/mynet/"*.htm \
-        $ROUTER:/usr/share/luci/view/mynet/
+    ssh $SSH_OPTS $ROUTER "mkdir -p /usr/lib/lua/luci/view/mynet"
+    for f in "$PROJECT_DIR/luasrc/view/mynet/"*.htm; do
+        ssh_put "$f" "/usr/lib/lua/luci/view/mynet/$(basename "$f")"
+    done
 }
 
 sync_static() {
     echo "[sync] static (css/js) ..."
     ssh $SSH_OPTS $ROUTER \
-        "mkdir -p /www/luci-static/resources/mynet/css \
-                  /www/luci-static/resources/mynet/js"
-    scp $SCP_OPTS \
-        "$PROJECT_DIR/htdocs/luci-static/resources/mynet/css/mynet.css" \
-        $ROUTER:/www/luci-static/resources/mynet/css/
-    scp $SCP_OPTS \
-        "$PROJECT_DIR/htdocs/luci-static/resources/mynet/js/mynet.js" \
-        $ROUTER:/www/luci-static/resources/mynet/js/
+        "mkdir -p /www/luci-static/resources/mynet/css /www/luci-static/resources/mynet/js"
+    ssh_put "$PROJECT_DIR/htdocs/luci-static/resources/mynet/css/mynet.css" \
+            "/www/luci-static/resources/mynet/css/mynet.css"
+    ssh_put "$PROJECT_DIR/htdocs/luci-static/resources/mynet/js/mynet.js" \
+            "/www/luci-static/resources/mynet/js/mynet.js"
 }
 
 sync_config() {
     echo "[sync] config.json ..."
     ssh $SSH_OPTS $ROUTER "mkdir -p /etc/mynet/conf"
-    scp $SCP_OPTS \
-        "$PROJECT_DIR/root/etc/mynet/conf/config.json" \
-        $ROUTER:/etc/mynet/conf/
+    ssh_put "$PROJECT_DIR/root/etc/mynet/conf/config.json" \
+            "/etc/mynet/conf/config.json"
+}
+
+sync_scripts() {
+    echo "[sync] scripts (usr/sbin) ..."
+    ssh $SSH_OPTS $ROUTER "mkdir -p /usr/sbin"
+    for f in "$PROJECT_DIR/root/usr/sbin/"*; do
+        [ -f "$f" ] || continue
+        ssh_put "$f" "/usr/sbin/$(basename "$f")"
+        ssh $SSH_OPTS $ROUTER "chmod +x /usr/sbin/$(basename "$f")"
+    done
 }
 
 clear_cache() {
@@ -76,9 +86,9 @@ clear_cache() {
 }
 
 install_luci() {
-    echo "[sync] 安装 LuCI（首次部署）..."
+    echo "[sync] 安装 LuCI Lua runtime（首次部署）..."
     ssh $SSH_OPTS $ROUTER \
-        "opkg update && opkg install luci luci-base luci-lib-jsonc curl 2>&1 | tail -5"
+        "opkg update && opkg install luci luci-base luci-lib-jsonc luci-lua-runtime luci-compat curl 2>&1 | tail -8"
 }
 
 TARGET="${1:-all}"
@@ -90,6 +100,7 @@ case "$TARGET" in
         sync_view
         sync_static
         sync_config
+        sync_scripts
         clear_cache
         ;;
     controller)  sync_controller; clear_cache ;;
@@ -97,12 +108,13 @@ case "$TARGET" in
     view)        sync_view;       clear_cache ;;
     static)      sync_static ;;
     config)      sync_config ;;
-    install)     install_luci; sync_controller; sync_model; sync_view; sync_static; sync_config; clear_cache ;;
+    scripts)     sync_scripts ;;
+    install)     install_luci; sync_controller; sync_model; sync_view; sync_static; sync_config; sync_scripts; clear_cache ;;
     *)
-        echo "用法: $0 [all|controller|model|view|static|config|install]"
+        echo "用法: $0 [all|controller|model|view|static|config|scripts|install]"
         exit 1
         ;;
 esac
 
 echo ""
-echo "[sync] 完成！访问: http://localhost:8080/cgi-bin/luci/admin/mynet"
+echo "[sync] 完成！浏览器访问: http://localhost:8080/cgi-bin/luci/admin/services/mynet"

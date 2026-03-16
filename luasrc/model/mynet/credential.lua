@@ -15,14 +15,14 @@ function M.load()
     local data = util.load_json_file(M.CRED_FILE)
     if not data then return nil end
     return {
-        user_id       = data.user_id       or 0,
+        user_id       = util.int_str(data.user_id    or 0),
         user_email    = data.user_email    or "",
         token         = data.token         or "",
         refresh_token = data.refresh_token or "",
         machine_id    = data.machine_id    or "",
         created_at    = data.created_at    or "",
         expires_at    = data.expires_at    or "",
-        zone_id       = data.zone_id       or 0,
+        zone_id       = util.int_str(data.zone_id    or 0),
     }
 end
 
@@ -35,14 +35,14 @@ function M.save(c)
         return false, "empty token"
     end
     return util.save_json_file(M.CRED_FILE, {
-        user_id       = c.user_id       or 0,
+        user_id       = util.int_str(c.user_id  or 0),
         user_email    = c.user_email    or "",
         token         = c.token,
         refresh_token = c.refresh_token or "",
         machine_id    = c.machine_id    or "",
         created_at    = c.created_at    or "",
         expires_at    = c.expires_at    or "",
-        zone_id       = c.zone_id       or 0,
+        zone_id       = util.int_str(c.zone_id  or 0),
     })
 end
 

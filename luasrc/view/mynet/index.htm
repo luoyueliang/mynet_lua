@@ -7,6 +7,136 @@
 
     <% local running=(vpn_status=="running" ) %>
 
+    <!-- ═══════════════════════════════════════════════════════
+         路由器核心信息面板（非卡片，始终第一屏）
+         ════════════════════════════════════════════════════ -->
+    <% if router_info then local ri = router_info %>
+    <div class="mn-info-panel">
+
+        <!-- 核心信息表格 -->
+        <%
+            local gnb_ctl_ok = false
+            if ri.deps then
+                for _, dep in ipairs(ri.deps) do
+                    if dep.name == "gnb_ctl" and dep.ok then gnb_ctl_ok = true end
+                end
+            end
+        %>
+        <table class="mn-info-table">
+            <tr>
+                <th><%:Mode%></th>
+                <td>
+                    <% if ri.routing_mode then %>
+                        <strong class="<% if ri.routing_mode:find('Gateway') then %>mn-running<% else %>mn-info-bypass<% end %>"><%=pcdata(ri.routing_mode)%></strong>
+                    <% else %>—<% end %>
+                </td>
+            </tr>
+            <% if ri.wan_iface and ri.wan_iface ~= "" then %>
+            <tr>
+                <th>WAN</th>
+                <td><code><%=pcdata(ri.wan_iface)%></code>
+                    <% if ri.wan_ip and ri.wan_ip ~= "" then %>&nbsp;<span class="mn-muted"><%=pcdata(ri.wan_ip)%></span><% end %>
+                    <% if ri.gateway and ri.gateway ~= "" then %>&emsp;<span class="mn-info-tag">GW</span>&nbsp;<code><%=pcdata(ri.gateway)%></code><% end %>
+                </td>
+            </tr>
+            <% end %>
+            <% if ri.lan_ip and ri.lan_ip ~= "" then %>
+            <tr>
+                <th>LAN</th>
+                <td><code><%=pcdata(ri.lan_ip)%></code></td>
+            </tr>
+            <% end %>
+            <tr>
+                <th>VPN</th>
+                <td>
+                    <% if ri.vpn_iface and ri.vpn_iface ~= "" then %>
+                        <code><%=pcdata(ri.vpn_iface)%></code>
+                        <% if ri.vpn_ip and ri.vpn_ip ~= "" then %>&nbsp;<span class="mn-muted"><%=pcdata(ri.vpn_ip)%></span><% end %>
+                    <% else %>
+                        <span class="mn-muted">—</span>
+                    <% end %>
+                    &emsp;<span class="mn-running"><%=tostring(ri.vpn_routes or 0)%> VPN routes</span>&nbsp;<span class="mn-muted">/ <%=tostring(ri.total_routes or 0)%> <%:total%></span>
+                </td>
+            </tr>
+            <tr>
+                <th><%:Firewall%></th>
+                <td>
+                    <% if ri.firewall then local fw = ri.firewall %>
+                        <% if fw.mynet_zone_exists then %><span class="mn-dep-ok">zone ✓</span><% else %><span class="mn-dep-fail">zone ✗</span><% end %>
+                        &nbsp;<% if fw.mynet_masq then %><span class="mn-dep-ok">masq ✓</span><% else %><span class="mn-dep-fail">masq ✗</span><% end %>
+                        <% if #(fw.forwards or {}) > 0 then %>
+                            &emsp;<% for _, fwd in ipairs(fw.forwards) do %><code class="mn-fw-rule"><%=pcdata(fwd)%></code>&nbsp;<% end %>
+                        <% else %>
+                            &emsp;<span class="mn-muted"><%:no forwarding%></span>
+                        <% end %>
+                    <% else %>
+                        <span class="mn-muted">N/A</span>
+                    <% end %>
+                </td>
+            </tr>
+            <tr>
+                <th><%:Node%></th>
+                <td>
+                    <% if node_id and tostring(node_id) ~= "0" then %>
+                        <code>#<%= type(node_id)=="number" and string.format("%.0f",node_id) or tostring(node_id) %></code>
+                        <% if ri.vpn_iface and ri.vpn_iface ~= "" then %>&nbsp;<span class="mn-muted">via <code><%=pcdata(ri.vpn_iface)%></code></span><% end %>
+                        &nbsp;<% if running then %><span class="mn-dep-ok">VPN <%:Running%></span><% else %><span class="mn-dep-fail">VPN <%:Stopped%></span><% end %>
+                    <% else %>
+                        <span class="mn-dep-fail"><%:Not configured%></span>
+                        &nbsp;<a class="mn-link" href="<%=luci.dispatcher.build_url('admin/services/mynet/wizard?tab=node')%>"><%:→ Wizard%></a>
+                    <% end %>
+                </td>
+            </tr>
+            <tr id="mn-deps-row" data-gnb-ok="<%=gnb_ctl_ok and '1' or '0'%>">
+                <th><%:Deps%></th>
+                <td>
+                    <span class="mn-dep-list" id="mn-dep-list">
+                        <% if ri.deps and #ri.deps > 0 then %>
+                            <%
+                            local sys_deps_missing = false
+                            local sys_dep_names = { bash=true, ["kmod-tun"]=true, ["curl-tls"]=true }
+                            %>
+                            <% for _, dep in ipairs(ri.deps) do %>
+                                <span class="mn-dep-item <% if dep.ok then %>mn-dep-ok<% else %>mn-dep-fail<% end %>" data-dep="<%=pcdata(dep.name)%>">
+                                    <%=pcdata(dep.name)%> <% if dep.ok then %>✓<% else %>✗<% end %><%
+                                    if not dep.ok and dep.hint and dep.hint ~= "" then
+                                    %>&nbsp;<span class="mn-dep-hint">(<%=pcdata(dep.hint)%>)</span><% end %>
+                                </span>
+                                <% if not dep.ok and sys_dep_names[dep.name] then sys_deps_missing = true end %>
+                            <% end %>
+                            <% if sys_deps_missing then %>
+                            &nbsp;<button class="mn-btn mn-btn-sm mn-btn-yellow"
+                                id="mn-install-sysdesp-btn"
+                                onclick="mnInstallSystemDeps(this)">&#9889; <%:Auto-Install%></button>
+                            <span id="mn-sysdesp-status" class="mn-small mn-muted" style="margin-left:6px"></span>
+                            <% end %>
+                        <% else %>
+                            <span class="mn-muted"><%:No dependency info%></span>
+                        <% end %>
+                    </span>
+                </td>
+            </tr>
+        </table>
+
+        <!-- GNB 自动安装进度（gnb_ctl 缺失时 JS 触发显示） -->
+        <div id="mn-gnb-install-panel" class="mn-gnb-install-panel mn-hidden">
+            <span class="mn-gnb-install-status">
+                <span id="mn-gnb-install-icon" class="mn-gnb-spin">⟳</span>
+                <span id="mn-gnb-install-msg"><%:Detecting...%></span>
+            </span>
+            <button id="mn-gnb-retry-btn" class="mn-btn mn-btn-secondary mn-hidden"
+                    onclick="mnRetryInstallGnb()" style="padding:1px 10px;font-size:0.82em;"><%:Retry%></button>
+            <div id="mn-gnb-install-log" class="mn-gnb-install-log mn-hidden"></div>
+        </div>
+
+    </div><!-- .mn-info-panel -->
+    <% end %>
+
+    <script>
+    /* 将服务端渲染的 gnb_ctl 状态注入 JS 全局变量 */
+    window.mnGnbCtlOk = <%=(gnb_ctl_ok ~= nil) and (gnb_ctl_ok and 'true' or 'false') or 'false'%>;
+    </script>
+
         <div class="mn-grid">
 
             <!-- VPN 状态卡 -->
@@ -62,11 +192,11 @@
                     </h3>
                 </div>
                 <div class="mn-card-body">
-                    <% if zone and zone.zone_id and zone.zone_id ~=0 then %>
+                    <% if zone and zone.zone_id and tostring(zone.zone_id) ~= "0" then %>
                         <p class="mn-zone-name">
                             <%=pcdata(zone.zone_name)%>
                         </p>
-                        <p class="mn-muted">ID: <%=tostring(zone.zone_id)%>
+                        <p class="mn-muted">ID: <%=zone.zone_id%>
                         </p>
                         <% else %>
                             <p class="mn-hint">
@@ -75,8 +205,8 @@
                             <% end %>
                 </div>
                 <div class="mn-card-actions">
-                    <a class="mn-btn" href="<%=luci.dispatcher.build_url('admin/mynet/zones')%>">
-                        <% if zone and zone.zone_id and zone.zone_id ~=0 then %>
+                    <a class="mn-btn" href="<%=luci.dispatcher.build_url('admin/services/mynet/zones')%>">
+                        <% if zone and zone.zone_id and tostring(zone.zone_id) ~= "0" then %>
                             <%:Change Zone%>
                                 <% else %>
                                     <%:Select Zone%>
@@ -95,7 +225,7 @@
                 <div class="mn-card-body">
                     <% if node_id then %>
                         <p>
-                            <%:Node ID%>: <code><%=tostring(node_id)%></code>
+                            <%:Node ID%>: <code><%= type(node_id)=="number" and string.format("%.0f",node_id) or tostring(node_id) %></code>
                         </p>
                         <% else %>
                             <p class="mn-hint">
@@ -104,16 +234,10 @@
                             <% end %>
                 </div>
                 <div class="mn-card-actions">
-                    <% if node_id then %>
-                        <a class="mn-btn"
-                            href="<%=luci.dispatcher.build_url('admin/mynet/nodes/detail?id=' .. tostring(node_id))%>">
-                            <%:Node Detail%>
-                        </a>
-                        <% end %>
-                            <a class="mn-btn mn-btn-secondary"
-                                href="<%=luci.dispatcher.build_url('admin/mynet/nodes')%>">
-                                <%:Nodes List%>
-                            </a>
+                    <a class="mn-btn"
+                        href="<%=luci.dispatcher.build_url('admin/services/mynet/node')%>">
+                        <%:Node Config%>
+                    </a>
                 </div>
             </div>
 
@@ -132,12 +256,87 @@
                     </p>
                 </div>
                 <div class="mn-card-actions">
-                    <a class="mn-btn mn-btn-red" href="<%=luci.dispatcher.build_url('admin/mynet/logout')%>">
+                    <a class="mn-btn mn-btn-red" href="<%=luci.dispatcher.build_url('admin/services/mynet/logout')%>">
                         <%:Logout%>
                     </a>
-                    <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/mynet/status')%>">
+                    <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/status')%>">
                         <%:Status%>
                     </a>
+                </div>
+            </div>
+
+            <!-- 服务状态 -->
+            <div class="mn-card">
+                <div class="mn-card-header">
+                    <span class="mn-dot <%=enable_status=='enabled' and 'mn-dot-green' or 'mn-dot-red'%>"></span>
+                    <h3><%:Service%></h3>
+                </div>
+                <div class="mn-card-body">
+                    <table class="mn-kv">
+                        <tr>
+                            <th>mynet</th>
+                            <td>
+                                <% if enable_status == "enabled" then %>
+                                    <strong class="mn-running"><%:enabled%></strong>
+                                <% else %>
+                                    <strong class="mn-stopped"><%:disabled%></strong>
+                                <% end %>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>mynetd</th>
+                            <td>
+                                <% if mynetd_status == "running" then %>
+                                    <strong class="mn-running"><%:running%></strong>
+                                <% else %>
+                                    <strong class="mn-stopped"><%:stopped%></strong>
+                                <% end %>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                <div class="mn-card-actions">
+                    <button class="mn-btn mn-btn-green"     onclick="mnApi('svc_start',      null, this)"><%:Start%></button>
+                    <button class="mn-btn mn-btn-red"       onclick="mnApi('svc_stop',       null, this)"><%:Stop%></button>
+                    <button class="mn-btn mn-btn-yellow"    onclick="mnApi('svc_restart',    null, this)"><%:Restart%></button>
+                    <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/service')%>"><%:Details%></a>
+                </div>
+            </div>
+
+            <!-- mynetd 守护进程 -->
+            <div class="mn-card">
+                <div class="mn-card-header">
+                    <span class="mn-dot <%=mynetd_status=='running' and 'mn-dot-green' or 'mn-dot-red'%>"></span>
+                    <h3><%:Monitor Daemon%></h3>
+                </div>
+                <div class="mn-card-body">
+                    <p class="mn-status-label">
+                        <% if mynetd_status == "running" then %>
+                            <strong class="mn-running"><%:Running%></strong>
+                        <% else %>
+                            <strong class="mn-stopped"><%:Stopped%></strong>
+                        <% end %>
+                    </p>
+                </div>
+                <div class="mn-card-actions">
+                    <button class="mn-btn mn-btn-green"  onclick="mnApi('mynetd_start',   null, this)"><%:Start%></button>
+                    <button class="mn-btn mn-btn-red"    onclick="mnApi('mynetd_stop',    null, this)"><%:Stop%></button>
+                    <button class="mn-btn mn-btn-yellow" onclick="mnApi('mynetd_restart', null, this)"><%:Restart%></button>
+                </div>
+            </div>
+
+            <!-- 快捷链接卡 -->
+            <div class="mn-card">
+                <div class="mn-card-header">
+                    <h3><%:Quick Links%></h3>
+                </div>
+                <div class="mn-card-body">
+                    <p class="mn-muted"><%:Network, routing and GNB diagnostic tools.%></p>
+                </div>
+                <div class="mn-card-actions">
+                    <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/network')%>"><%:Network%></a>
+                    <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/gnb')%>"><%:GNB Monitor%></a>
+                    <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/status')%>"><%:Status%></a>
                 </div>
             </div>
 
@@ -149,5 +348,9 @@
         <script>
             // 自动刷新 VPN 状态（每 15 秒）
             setInterval(function () { mnRefreshStatus(); }, 15000);
+            // 页面加载后自动检测 GNB；若缺失则触发后台安装
+            document.addEventListener('DOMContentLoaded', function () {
+                mnAutoInstallGnb();
+            });
         </script>
         <%+footer%>

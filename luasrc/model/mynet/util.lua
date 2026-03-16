@@ -16,6 +16,11 @@ M.ZONE_FILE   = M.CONF_DIR  .. "/zone.json"
 M.VPN_CONF    = M.CONF_DIR  .. "/mynet.conf"
 M.LOG_FILE    = M.MYNET_HOME .. "/logs/luci.log"
 
+-- GNB 驱动目录（对应 mynet_tui driver/gnb 结构）
+M.GNB_DRIVER_ROOT = M.MYNET_HOME .. "/driver/gnb"
+M.GNB_BIN_DIR     = M.GNB_DRIVER_ROOT .. "/bin"
+M.GNB_CONF_DIR    = M.GNB_DRIVER_ROOT .. "/conf"
+
 -- ─────────────────────────────────────────────────────────────
 -- JSON（优先使用 luci.jsonc，失败则降级）
 -- ─────────────────────────────────────────────────────────────
@@ -31,7 +36,13 @@ local function _json_encode(obj)
     local t = type(obj)
     if t == "nil"     then return "null" end
     if t == "boolean" then return obj and "true" or "false" end
-    if t == "number"  then return tostring(obj) end
+    if t == "number"  then
+        -- 避免科学计数法：整数型用 %.0f，浮点型保留小数
+        if obj == math.floor(obj) and obj >= -1e15 and obj <= 1e15 then
+            return string.format("%.0f", obj)
+        end
+        return tostring(obj)
+    end
     if t == "string"  then
         return '"' .. obj:gsub('\\','\\\\'):gsub('"','\\"')
                          :gsub('\n','\\n'):gsub('\r','\\r')
@@ -66,6 +77,19 @@ end
 -- 对外接口
 function M.json_encode(obj) return _json_encode(obj) end
 function M.json_decode(str) return _json_decode(str) end
+
+-- 将数字/数字字符串转为整数十进制字符串（无科学计数法）
+-- 支持 number、"3.84e+15" 形式的字符串，以及普通数字字符串
+function M.int_str(v)
+    if type(v) == "number" then
+        return string.format("%.0f", v)
+    end
+    local n = tonumber(v)
+    if n then
+        return string.format("%.0f", n)
+    end
+    return tostring(v or 0)
+end
 
 -- ─────────────────────────────────────────────────────────────
 -- Shell 执行

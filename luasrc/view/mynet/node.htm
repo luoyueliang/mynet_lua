@@ -1,0 +1,389 @@
+<%+header%>
+<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+<script src="<%=resource%>/mynet/js/mynet.js" defer></script>
+
+<h2><%:Node Configuration%></h2>
+
+<%
+-- 辅助：node_id 格式化为整数字符串
+local function nid_fmt(v)
+    if type(v) == "number" then return string.format("%.0f", v) end
+    return tostring(v or 0)
+end
+local cur_nid_str = nid_fmt(node_id)
+local vpn_running = (vpn_status == "running")
+%>
+
+<!-- ═══════════════════════ 节点信息面板 ═══════════════════════ -->
+<div class="mn-info-panel">
+    <div class="mn-section-header">
+        <h3><%:Current Node%></h3>
+    </div>
+    <!-- 行1：当前 Zone + 切换 Zone -->
+    <div class="mn-row" style="margin-bottom:6px;display:flex;align-items:center;gap:8px;">
+        <span class="mn-label mn-muted mn-small"><%:Zone%>:</span>
+        <% if zone and zone.zone_name and zone.zone_name ~= "" then %>
+        <span class="mn-zone-badge"><%=pcdata(zone.zone_name)%></span>
+        <a class="mn-btn mn-btn-sm mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/wizard?tab=zone')%>">&#8645; <%:Change Zone%></a>
+        <% else %>
+        <span class="mn-muted mn-small"><%:not selected%></span>
+        <a class="mn-btn mn-btn-sm mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/wizard?tab=zone')%>">&#8644; <%:Select Zone%></a>
+        <% end %>
+    </div>
+
+    <% if cur_nid_str == "0" or cur_nid_str == "" then %>
+    <div class="mn-alert mn-alert-warn">
+        <%:No node configured.%>
+        &nbsp;<a class="mn-link" href="<%=luci.dispatcher.build_url('admin/services/mynet/wizard?tab=node')%>"><%:→ Wizard%></a>
+    </div>
+    <% else %>
+
+    <table class="mn-info-table">
+        <tr>
+            <th><%:Node ID%></th>
+            <td><code>#<%=cur_nid_str%></code></td>
+        </tr>
+        <% if node_info then %>
+        <tr>
+            <th><%:Node Name%></th>
+            <td><strong><%=pcdata(node_info.node_name or node_info.name or "—")%></strong>
+                <% if node_info.node_remarks and node_info.node_remarks ~= "" then %>
+                &nbsp;<span class="mn-muted mn-small"><%=pcdata(node_info.node_remarks)%></span>
+                <% end %>
+            </td>
+        </tr>
+        <tr>
+            <th><%:VPN Type%></th>
+            <td><span class="mn-badge"><%=pcdata(node_info.vpn_type or "—")%></span></td>
+        </tr>
+        <tr>
+            <th><%:Virtual IP%></th>
+            <td><code><%=pcdata(node_info.virtual_ip or "—")%></code></td>
+        </tr>
+        <tr>
+            <th><%:Node Status%></th>
+            <td>
+                <%
+                local nst = node_info.status or ""
+                local online = (nst == "online" or node_info.is_active)
+                %>
+                <span class="mn-dot <%=online and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
+                <%=pcdata(nst ~= "" and nst or "—")%>
+            </td>
+        </tr>
+        <% else %>
+        <tr>
+            <td colspan="2">
+                <% if node_err then %>
+                <span class="mn-muted mn-small"><%:API error%>: <%=pcdata(node_err)%></span>
+                <% else %>
+                <span class="mn-muted mn-small">…</span>
+                <% end %>
+            </td>
+        </tr>
+        <% end %>
+        <tr>
+            <th>VPN</th>
+            <td>
+                <span id="mn-vpn-dot" class="mn-dot <%=vpn_running and 'mn-dot-green' or 'mn-dot-red'%>"></span>
+                <% if vpn_running then %>
+                <span id="mn-vpn-label" class="mn-dep-ok"><%:Running%></span>
+                <% else %>
+                <span id="mn-vpn-label" class="mn-dep-fail"><%:Stopped%></span>
+                <% end %>
+                &emsp;
+                <button class="mn-btn mn-btn-sm mn-btn-green"  onclick="mnApi('gnb_start',   {node_id: window.mnCurrentNodeId}, this)"><%:Start%></button>
+                <button class="mn-btn mn-btn-sm mn-btn-red"    onclick="mnApi('gnb_stop',    {node_id: window.mnCurrentNodeId}, this)"><%:Stop%></button>
+                <button class="mn-btn mn-btn-sm mn-btn-yellow" onclick="mnApi('gnb_restart', {node_id: window.mnCurrentNodeId}, this)"><%:Restart%></button>
+            </td>
+        </tr>
+    </table>
+    <% end %> <!-- end node configured block -->
+
+    <!-- 行2：切换 Node -->
+    <%
+    local node_list  = nodes_data and nodes_data.data or {}
+    local total      = (nodes_data and nodes_data.total) or 0
+    local last_page  = (nodes_data and nodes_data.last_page) or 1
+    local cur_page   = (nodes_data and nodes_data.current_page) or page or 1
+    %>
+    <div class="mn-row" style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <span class="mn-label mn-muted mn-small"><%:Node%>:</span>
+        <% if #node_list > 0 then %>
+        <select id="mn-switch-node-id" class="mn-select">
+            <% for _, n in ipairs(node_list) do %>
+            <%
+            local nid_s  = nid_fmt(n.node_id or n.id or 0)
+            local nname  = n.node_name or n.name or ""
+            local vip    = n.virtual_ip or ""
+            local is_sel = nid_s == cur_nid_str
+            %>
+            <option value="<%=pcdata(nid_s)%>"<% if is_sel then %> selected<% end %>>
+                #<%=pcdata(nid_s)%> <%=pcdata(nname)%>
+                <% if vip ~= "" then %>(<%=pcdata(vip)%>)<% end %>
+                <% if is_sel then %>[current]<% end %>
+            </option>
+            <% end %>
+        </select>
+        <button class="mn-btn" onclick="mnNodeSwitch()">&#8644; <%:Switch Node%></button>
+        <% if last_page > 1 then %>
+        <a class="mn-btn mn-btn-sm mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/node?page=' .. tostring(cur_page > 1 and cur_page-1 or 1))%>">&#8249;</a>
+        <span class="mn-muted mn-small"><%=cur_page%>/<%=last_page%></span>
+        <a class="mn-btn mn-btn-sm mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/node?page=' .. tostring(cur_page < last_page and cur_page+1 or last_page))%>">&#8250;</a>
+        <% end %>
+        <% else %>
+        <span class="mn-muted mn-small"><%:No nodes — %><a class="mn-link" href="<%=luci.dispatcher.build_url('admin/services/mynet/wizard?tab=zone')%>"><%:select zone first%></a></span>
+        <% end %>
+        <span id="mn-switch-result" class="mn-hidden mn-small mn-muted"></span>
+    </div>
+
+</div><!-- .mn-info-panel -->
+
+<!-- ═══════════ GNB 配置区（仅当已配置节点时显示）═══════════ -->
+<% if cur_nid_str ~= "0" and cur_nid_str ~= "" then %>
+
+<div class="mn-section">
+    <div class="mn-section-header">
+        <h3><%:GNB Configuration Files%></h3>
+        <div class="mn-flex-gap">
+            <span class="mn-muted mn-small"><%:Node%> #<%=cur_nid_str%></span>
+            <button class="mn-btn mn-btn-sm mn-btn-secondary"
+                onclick="mnNodeRefreshAll()">&#8635; <%:Refresh All Configs%></button>
+        </div>
+    </div>
+
+    <!-- address.conf -->
+    <div class="mn-config-block" id="mn-cfg-address">
+        <div class="mn-config-header">
+            <span class="mn-config-name">address.conf</span>
+            <% if local_cfgs.address_conf_ok then %>
+            <span class="mn-badge mn-badge-ok" title="<%:File present%>">&#10003;</span>
+            <% else %>
+            <span class="mn-badge mn-badge-warn" title="<%:File empty or missing%>">&mdash;</span>
+            <% end %>
+            <span class="mn-config-hint mn-muted mn-small"><%:Service address index%></span>
+            <div class="mn-flex-gap">
+                <span class="mn-config-status" id="mn-cfg-address-status"></span>
+                <button class="mn-btn mn-btn-sm"
+                    onclick="mnNodeRefreshConfig('address', this)">&#8635; <%:Update%></button>
+                <button class="mn-btn mn-btn-sm mn-btn-secondary"
+                    id="mn-view-btn-address"
+                    data-label-expand="&#9660; View" data-label-collapse="&#9650; Hide"
+                    onclick="mnToggle('mn-pre-address', this)">&#9660; <%:View%></button>
+            </div>
+        </div>
+        <pre class="mn-pre mn-hidden" id="mn-pre-address"><%=pcdata(local_cfgs.address_conf ~= "" and local_cfgs.address_conf or "(empty)")%></pre>
+    </div>
+
+    <!-- route.conf -->
+    <div class="mn-config-block" id="mn-cfg-route">
+        <div class="mn-config-header">
+            <span class="mn-config-name">route.conf</span>
+            <% if local_cfgs.route_conf_ok then %>
+            <span class="mn-badge mn-badge-ok" title="<%:File present%>">&#10003;</span>
+            <% else %>
+            <span class="mn-badge mn-badge-warn" title="<%:File empty or missing%>">&mdash;</span>
+            <% end %>
+            <span class="mn-config-hint mn-muted mn-small"><%:VPN routing rules%></span>
+            <div class="mn-flex-gap">
+                <span class="mn-config-status" id="mn-cfg-route-status"></span>
+                <button class="mn-btn mn-btn-sm"
+                    onclick="mnNodeRefreshConfig('route', this)">&#8635; <%:Update%></button>
+                <button class="mn-btn mn-btn-sm mn-btn-secondary"
+                    id="mn-view-btn-route"
+                    data-label-expand="&#9660; View" data-label-collapse="&#9650; Hide"
+                    onclick="mnToggle('mn-pre-route', this)">&#9660; <%:View%></button>
+            </div>
+        </div>
+        <pre class="mn-pre mn-hidden" id="mn-pre-route"><%=pcdata(local_cfgs.route_conf ~= "" and local_cfgs.route_conf or "(empty)")%></pre>
+    </div>
+
+    <!-- node.conf -->
+    <div class="mn-config-block" id="mn-cfg-node">
+        <div class="mn-config-header">
+            <span class="mn-config-name">node.conf</span>
+            <% if local_cfgs.node_conf_ok then %>
+            <span class="mn-badge mn-badge-ok" title="<%:File present%>">&#10003;</span>
+            <% else %>
+            <span class="mn-badge mn-badge-warn" title="<%:File empty or missing%>">&mdash;</span>
+            <% end %>
+            <span class="mn-config-hint mn-muted mn-small"><%:GNB node config%></span>
+            <div class="mn-flex-gap">
+                <span class="mn-config-status" id="mn-cfg-node-status"></span>
+                <button class="mn-btn mn-btn-sm"
+                    onclick="mnNodeRefreshConfig('node', this)">&#8635; <%:Update%></button>
+                <button class="mn-btn mn-btn-sm mn-btn-secondary"
+                    id="mn-view-btn-node"
+                    data-label-expand="&#9660; View" data-label-collapse="&#9650; Hide"
+                    onclick="mnToggle('mn-pre-node', this)">&#9660; <%:View%></button>
+            </div>
+        </div>
+        <pre class="mn-pre mn-hidden" id="mn-pre-node"><%=pcdata(local_cfgs.node_conf ~= "" and local_cfgs.node_conf or "(empty)")%></pre>
+    </div>
+
+</div><!-- .mn-section GNB configs -->
+
+<!-- ═══════════════════════ GNB 密钥 ═══════════════════════ -->
+<div class="mn-section">
+    <div class="mn-section-header">
+        <h3><%:GNB Crypt Keys%></h3>
+    </div>
+
+    <!-- 密钥文件状态 -->
+    <%
+    local pkey      = priv_key or ""
+    local pkey_show = ""
+    if pkey ~= "" and #pkey >= 16 then
+        pkey_show = pkey:sub(1,8) .. "******" .. pkey:sub(-8)
+    elseif pkey ~= "" then
+        pkey_show = "****"
+    end
+    -- 公钥文件路径
+    local util_m = require("luci.model.mynet.util")
+    local pub_key_path  = string.format("%s/%s/security/%s.public",
+        util_m.GNB_CONF_DIR, nid_fmt(node_id), nid_fmt(node_id))
+    local priv_key_path = string.format("%s/%s/security/%s.private",
+        util_m.GNB_CONF_DIR, nid_fmt(node_id), nid_fmt(node_id))
+    local pub_key_raw = util_m.trim(util_m.read_file(pub_key_path) or "")
+    local priv_key_ok = pkey ~= ""
+    local pub_key_ok  = pub_key_raw ~= ""
+    %>
+    <%
+    local priv_key_fname = nid_fmt(node_id) .. ".private"
+    local pub_key_fname  = nid_fmt(node_id) .. ".public"
+    local pub_preview = pub_key_ok
+        and (pub_key_raw:len() >= 16
+             and pub_key_raw:sub(1,8).."******"..pub_key_raw:sub(-8)
+             or  pub_key_raw)
+        or ""
+    %>
+    <div class="mn-config-block">
+        <div class="mn-config-header" style="gap:8px">
+            <!-- 文件状态：private key / public key -->
+            <table class="mn-kv" style="margin:0">
+                <tr>
+                    <th style="white-space:nowrap"><%:Private Key%> <span class="mn-muted mn-small">(<%=pcdata(priv_key_fname)%>)</span></th>
+                    <td>
+                        <% if priv_key_ok then %>
+                        <code class="mn-small mn-muted"><%=pcdata(pkey_show)%></code>
+                        <% else %>
+                        <span class="mn-badge mn-badge-warn">&mdash; <%:missing%></span>
+                        <% end %>
+                    </td>
+                </tr>
+                <tr>
+                    <th style="white-space:nowrap"><%:Public Key%> <span class="mn-muted mn-small">(<%=pcdata(pub_key_fname)%>)</span></th>
+                    <td>
+                        <% if pub_key_ok then %>
+                        <code class="mn-small mn-muted"><%=pcdata(pub_preview)%></code>
+                        <% else %>
+                        <span class="mn-badge mn-badge-warn">&mdash; <%:missing%></span>
+                        <% end %>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- 三选一操作面板 -->
+        <div style="margin-top:10px">
+            <!-- 模式切换按钮 -->
+            <div class="mn-key-mode-btns" style="display:flex;gap:6px;margin-bottom:10px">
+                <button id="mn-keymode-file-btn"
+                    class="mn-btn mn-btn-sm mn-btn-secondary"
+                    onclick="mnKeyMode('file')">&#128194; <%:Upload File%></button>
+                <button id="mn-keymode-paste-btn"
+                    class="mn-btn mn-btn-sm mn-btn-secondary"
+                    onclick="mnKeyMode('paste')">&#9000; <%:Paste Hex%></button>
+                <button id="mn-keymode-gen-btn"
+                    class="mn-btn mn-btn-sm mn-btn-secondary"
+                    onclick="mnKeyMode('gen')">&#128273; <%:Generate New%></button>
+            </div>
+
+            <!-- 模式 1: 上传文件 -->
+            <div id="mn-keymode-file" class="mn-hidden">
+                <div class="mn-key-row">
+                    <input type="file" id="mn-privkey-file" class="mn-file-input" accept=".key,.txt,.private">
+                </div>
+                <div class="mn-key-row" style="margin-top:6px">
+                    <button class="mn-btn" onclick="mnNodeSavePrivKey('file')">&#8659; <%:Import%></button>
+                    <span id="mn-privkey-status" class="mn-small mn-muted" style="margin-left:12px"></span>
+                </div>
+            </div>
+
+            <!-- 模式 2: 粘贴 hex -->
+            <div id="mn-keymode-paste" class="mn-hidden">
+                <div class="mn-key-row">
+                    <textarea id="mn-privkey-input" class="mn-privkey-textarea"
+                        rows="2" placeholder="128-char hex (GNB ed25519 private key)..."></textarea>
+                </div>
+                <div class="mn-key-row" style="margin-top:6px">
+                    <button class="mn-btn" onclick="mnNodeSavePrivKey('paste')">&#8659; <%:Import%></button>
+                    <span id="mn-privkey-paste-status" class="mn-small mn-muted" style="margin-left:12px"></span>
+                </div>
+            </div>
+
+            <!-- 模式 3: 生成新密钥对 -->
+            <div id="mn-keymode-gen" class="mn-hidden">
+                <p class="mn-small mn-muted" style="margin:0 0 8px">
+                    &#9888; <%:This will replace the existing key. All peers will need to re-exchange public keys.%>
+                </p>
+                <div class="mn-key-row">
+                    <button class="mn-btn mn-btn-yellow" onclick="mnNodeGenKey()">&#128273; <%:Generate &amp; Upload%></button>
+                    <span id="mn-genkey-status" class="mn-small mn-muted" style="margin-left:12px"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════ 对端公钥 ═══════════════════════ -->
+<div class="mn-section">
+    <div class="mn-section-header">
+        <h3><%:Peer Public Keys%></h3>
+        <span class="mn-muted mn-small"><%:Node%> #<%=cur_nid_str%> / <%=#peer_keys%> <%:peers%></span>
+    </div>
+
+    <% if #peer_keys == 0 then %>
+    <p class="mn-muted mn-small"><%:No peer keys found in conf directory.%></p>
+    <% else %>
+    <div class="mn-table-wrap">
+        <table class="mn-table">
+            <thead>
+                <tr>
+                    <th><%:Peer ID%></th>
+                    <th><%:Public Key (hex)%></th>
+                </tr>
+            </thead>
+            <tbody>
+            <% for _, pk in ipairs(peer_keys) do %>
+            <%
+            local kh = pk.key_hex or ""
+            local kh_show = #kh >= 16 and kh:sub(1,8).."******"..kh:sub(-8) or kh
+            %>
+            <tr>
+                <td><code class="mn-muted"><%=pcdata(pk.peer_id)%></code></td>
+                <td><code class="mn-muted" title="<%=pcdata(kh)%>"><%=pcdata(kh_show)%></code></td>
+            </tr>
+            <% end %>
+            </tbody>
+        </table>
+    </div>
+    <% end %>
+</div>
+
+<% end %> <!-- end node configured GNB block -->
+
+<!-- ═══════════════════════ 底部操作栏 ═══════════════════════ -->
+<div class="mn-actions-bar">
+    <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>">&#8592; <%:Dashboard%></a>
+    <span id="mn-node-global-status" class="mn-small mn-muted"></span>
+</div>
+
+<div id="mn-toast" class="mn-toast mn-hidden"></div>
+
+<script>
+// 当前节点 ID（字符串，避免科学计数法）
+window.mnCurrentNodeId = "<%=cur_nid_str%>";
+</script>
+
+<%+footer%>

@@ -1,0 +1,163 @@
+#!/bin/sh
+# mynet-fix-curl — 修复 OpenWrt mbedTLS + Let's Encrypt TLS 握手失败
+#
+# 根因：OpenWrt 默认 curl 链接 mbedTLS 2.28.x，对 Let's Encrypt ISRG Root X1
+#       / E5/E6 中间链存在 TLS 握手 fatal alert（错误码 -0x7780）。
+#       `-k` 也无效，因为握手在 ClientHello 阶段就失败。
+#
+# 方案：安装 libcurl-gnutls4（GnuTLS 3.8 版 libcurl），然后将
+#       /usr/lib/libcurl.so.4 symlink 指向 gnutls 版本。
+#       两者均为 curl 8.7.1，ABI 完全兼容，仅 TLS backend 不同。
+#
+# 用法：
+#   sh /usr/sbin/mynet-fix-curl          # 自动修复
+#   sh /usr/sbin/mynet-fix-curl --check  # 仅检查，不修改
+#   sh /usr/sbin/mynet-fix-curl --undo   # 回滚到 mbedTLS 版本
+#
+# 此脚本是 mynet 裸 OpenWrt 部署的必要依赖步骤之一。
+
+GNUTLS_PKG="libcurl-gnutls4"
+GNUTLS_LIB="/usr/lib/libcurl-gnutls.so.4"
+CURL_LIB="/usr/lib/libcurl.so.4"
+BACKUP_LIB="${CURL_LIB}.mbedtls.bak"
+TEST_URL="https://download.mynet.club/apps.json"
+
+log()  { echo "[mynet-fix-curl] $*"; }
+ok()   { echo "[mynet-fix-curl] ✓ $*"; }
+warn() { echo "[mynet-fix-curl] ⚠ $*"; }
+err()  { echo "[mynet-fix-curl] ✗ $*" >&2; }
+
+# ── 帮助函数 ────────────────────────────────────────────────
+
+check_curl_backend() {
+    # 返回 0=gnutls 生效，1=mbedtls，2=未知
+    if [ -L "$CURL_LIB" ]; then
+        target=$(readlink "$CURL_LIB" 2>/dev/null)
+        case "$target" in
+            *gnutls*) return 0 ;;
+        esac
+    fi
+    # 通过实际握手测试
+    local out
+    out=$(curl -fsSL --connect-timeout 5 -m 10 "$TEST_URL" 2>&1 | head -1)
+    if echo "$out" | grep -q 'mbedTLS.*-0x7780'; then
+        return 1
+    fi
+    if echo "$out" | grep -q '"apps"'; then
+        return 0
+    fi
+    return 2
+}
+
+check_gnutls_installed() {
+    opkg list-installed 2>/dev/null | grep -q "^${GNUTLS_PKG}"
+}
+
+# ── --check 模式 ─────────────────────────────────────────────
+
+do_check() {
+    log "检查 curl TLS backend 状态..."
+
+    echo ""
+    echo "  curl 二进制:      $(which curl 2>/dev/null || echo '未找到')"
+    echo "  curl 版本:        $(curl --version 2>/dev/null | head -1)"
+    echo "  libcurl.so.4:     $(ls -la $CURL_LIB 2>/dev/null || echo '未找到')"
+    echo "  libcurl-gnutls:   $(ls $GNUTLS_LIB 2>/dev/null && echo '已安装' || echo '未安装')"
+    echo "  gnutls 包:        $(check_gnutls_installed && echo '已安装' || echo '未安装')"
+    echo "  mbedTLS 备份:     $([ -f $BACKUP_LIB ] && echo '存在' || echo '无')"
+    echo ""
+
+    check_curl_backend
+    case $? in
+        0) ok "curl 当前使用 GnuTLS backend，HTTPS 正常"; return 0 ;;
+        1) err "curl 使用 mbedTLS，存在 TLS 握手问题，运行不带参数修复"; return 1 ;;
+        *) warn "无法确定状态（可能网络不通）"; return 2 ;;
+    esac
+}
+
+# ── --undo 模式 ──────────────────────────────────────────────
+
+do_undo() {
+    log "回滚到 mbedTLS 版 libcurl..."
+
+    if [ ! -f "$BACKUP_LIB" ]; then
+        err "找不到备份文件 $BACKUP_LIB，无法回滚"
+        return 1
+    fi
+
+    cp -p "$BACKUP_LIB" "$CURL_LIB"
+    ok "已回滚到 mbedTLS 版（备份保留在 $BACKUP_LIB）"
+}
+
+# ── 主修复流程 ────────────────────────────────────────────────
+
+do_fix() {
+    log "开始 curl TLS 修复流程..."
+
+    # 步骤 1：检查是否已修复
+    if [ -L "$CURL_LIB" ]; then
+        target=$(readlink "$CURL_LIB" 2>/dev/null)
+        if echo "$target" | grep -q "gnutls"; then
+            ok "libcurl.so.4 已指向 gnutls 版（$target），无需修复"
+            return 0
+        fi
+    fi
+
+    # 步骤 2：安装 libcurl-gnutls4
+    if ! check_gnutls_installed; then
+        log "安装 $GNUTLS_PKG..."
+        if ! opkg install "$GNUTLS_PKG"; then
+            err "安装 $GNUTLS_PKG 失败"
+            err "请先运行: opkg update"
+            return 1
+        fi
+        ok "$GNUTLS_PKG 安装完成"
+    else
+        ok "$GNUTLS_PKG 已安装"
+    fi
+
+    # 步骤 3：确认 gnutls 库文件存在
+    if [ ! -f "$GNUTLS_LIB" ]; then
+        err "安装完成但找不到 $GNUTLS_LIB"
+        return 1
+    fi
+
+    # 步骤 4：备份 mbedTLS 版（仅一次）
+    if [ ! -f "$BACKUP_LIB" ]; then
+        cp -p "$CURL_LIB" "$BACKUP_LIB"
+        ok "mbedTLS libcurl 备份至 $BACKUP_LIB"
+    fi
+
+    # 步骤 5：替换 symlink
+    ln -sf "$GNUTLS_LIB" "$CURL_LIB"
+    ok "libcurl.so.4 → $GNUTLS_LIB"
+
+    # 步骤 6：验证
+    log "验证 HTTPS 连通性..."
+    local test_out
+    test_out=$(curl -fsSL --connect-timeout 5 -m 15 "$TEST_URL" 2>&1 | head -1)
+    if echo "$test_out" | grep -q '"apps"'; then
+        ok "HTTPS 测试成功！下载服务器可访问"
+    else
+        warn "HTTPS 测试结果: $test_out"
+        warn "修复已应用，但可能需要检查网络连通性"
+    fi
+
+    echo ""
+    ok "curl TLS 修复完成"
+    echo "  如需回滚: sh $0 --undo"
+}
+
+# ── 入口 ─────────────────────────────────────────────────────
+
+case "${1:-}" in
+    --check|-c)  do_check ;;
+    --undo|-u)   do_undo ;;
+    --help|-h)
+        echo "用法: $0 [--check|--undo|--help]"
+        echo "  （无参数）  修复 curl mbedTLS TLS握手失败"
+        echo "  --check     仅检查状态，不修改"
+        echo "  --undo      回滚到 mbedTLS 版"
+        ;;
+    *)           do_fix ;;
+esac

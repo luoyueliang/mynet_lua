@@ -1,0 +1,209 @@
+<%+header%>
+<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+
+<h2><%:Service Management%></h2>
+
+<%
+local tab = active_tab or "status"
+if tab ~= "status" and tab ~= "mynetd" and tab ~= "log" and tab ~= "install" then tab = "status" end
+local base_url = luci.dispatcher.build_url('admin/services/mynet/service')
+%>
+
+<% if op_result then %>
+<div class="mn-alert <%=op_result.ok and 'mn-alert-success' or 'mn-alert-error'%>">
+    <%=pcdata(op_result.msg or "")%>
+</div>
+<% end %>
+
+<div class="mn-tabs">
+    <div class="mn-tab-nav">
+        <a class="mn-tab-btn<%=tab=='status' and ' active' or ''%>"  href="<%=base_url%>?tab=status"><%:VPN Service%></a>
+        <a class="mn-tab-btn<%=tab=='mynetd' and ' active' or ''%>" href="<%=base_url%>?tab=mynetd"><%:Monitor Daemon%></a>
+        <a class="mn-tab-btn<%=tab=='log' and ' active' or ''%>"    href="<%=base_url%>?tab=log"><%:Logs%></a>
+        <a class="mn-tab-btn<%=tab=='install' and ' active' or ''%>" href="<%=base_url%>?tab=install"><%:Install%></a>
+    </div>
+
+    <!-- VPN Service -->
+    <div class="mn-tab-panel<%=tab=='status' and ' active' or ''%>">
+        <div class="mn-card">
+            <div class="mn-card-header"><h3><%:mynet (VPN Service)%></h3></div>
+            <div class="mn-card-body">
+                <div class="mn-service-row">
+                    <span class="mn-service-name">/etc/init.d/mynet</span>
+                    <span class="mn-dot <%=vpn_status=='running' and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
+                    <span class="<%=vpn_status=='running' and 'mn-running' or 'mn-stopped'%>">
+                        <%=pcdata(vpn_status or "unknown")%>
+                    </span>
+                    <% if enable_status then %>
+                    <span class="mn-badge"><%:autostart%> <%=pcdata(enable_status)%></span>
+                    <% end %>
+                    <div class="mn-service-btns">
+                        <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/service/op')%>" style="display:inline">
+                            <input type="hidden" name="service" value="mynet">
+                            <input type="hidden" name="tab"     value="status">
+                            <button name="op" value="start"   class="mn-btn mn-btn-sm mn-btn-green"><%:Start%></button>
+                            <button name="op" value="stop"    class="mn-btn mn-btn-sm mn-btn-red"><%:Stop%></button>
+                            <button name="op" value="restart" class="mn-btn mn-btn-sm mn-btn-yellow"><%:Restart%></button>
+                            <button name="op" value="enable"  class="mn-btn mn-btn-sm mn-btn-secondary"><%:Enable%></button>
+                            <button name="op" value="disable" class="mn-btn mn-btn-sm mn-btn-secondary"><%:Disable%></button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <% if vpn_iface then %>
+        <div class="mn-card" style="margin-top:12px">
+            <div class="mn-card-header"><h3><%:VPN Interface%></h3></div>
+            <div class="mn-card-body">
+                <table class="mn-kv">
+                    <tr><th><%:Interface%></th><td><code><%=pcdata(vpn_iface.interface or "")%></code></td></tr>
+                    <tr><th><%:State%></th><td><%=pcdata(vpn_iface.state or "")%></td></tr>
+                    <% if vpn_iface.mtu then %>
+                    <tr><th>MTU</th><td><%=vpn_iface.mtu%></td></tr>
+                    <% end %>
+                    <% if vpn_iface.flags then %>
+                    <tr><th><%:Flags%></th><td><code><%=pcdata(vpn_iface.flags)%></code></td></tr>
+                    <% end %>
+                </table>
+            </div>
+        </div>
+        <% end %>
+    </div>
+
+    <!-- Monitor Daemon -->
+    <div class="mn-tab-panel<%=tab=='mynetd' and ' active' or ''%>">
+        <div class="mn-card">
+            <div class="mn-card-header"><h3><%:mynetd (Monitor Daemon)%></h3></div>
+            <div class="mn-card-body">
+                <div class="mn-service-row">
+                    <span class="mn-service-name">mynetd</span>
+                    <span class="mn-dot <%=mynetd_status=='running' and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
+                    <span class="<%=mynetd_status=='running' and 'mn-running' or 'mn-stopped'%>">
+                        <%=pcdata(mynetd_status or "unknown")%>
+                    </span>
+                    <% if mynetd_pid and mynetd_pid ~= "" then %>
+                    <span class="mn-badge">PID <%=pcdata(mynetd_pid)%></span>
+                    <% end %>
+                    <div class="mn-service-btns">
+                        <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/service/op')%>" style="display:inline">
+                            <input type="hidden" name="service" value="mynetd">
+                            <input type="hidden" name="tab"     value="mynetd">
+                            <button name="op" value="start"   class="mn-btn mn-btn-sm mn-btn-green"><%:Start%></button>
+                            <button name="op" value="stop"    class="mn-btn mn-btn-sm mn-btn-red"><%:Stop%></button>
+                            <button name="op" value="restart" class="mn-btn mn-btn-sm mn-btn-yellow"><%:Restart%></button>
+                        </form>
+                    </div>
+                </div>
+                <table class="mn-kv" style="margin-top:10px">
+                    <tr><th><%:Binary%></th><td><code><%=pcdata(mynetd_bin or "")%></code></td></tr>
+                    <tr><th><%:Heartbeat%></th><td><%=pcdata(tostring(heartbeat_interval or 300))%> s</td></tr>
+                    <tr><th><%:Log Level%></th><td><%=pcdata(log_level or "info")%></td></tr>
+                    <tr><th><%:Config%></th><td><a href="<%=luci.dispatcher.build_url('admin/services/mynet/settings')%>"><%:Edit in Settings%></a></td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logs -->
+    <div class="mn-tab-panel<%=tab=='log' and ' active' or ''%>">
+        <div class="mn-section-header" style="margin-bottom:8px">
+            <h3><%:Recent Log%> <span class="mn-muted mn-small">(<%=pcdata(log_path or "")%>)</span></h3>
+            <a href="<%=base_url%>?tab=log" class="mn-btn mn-btn-sm mn-btn-secondary">&#8635; <%:Refresh%></a>
+        </div>
+        <% if log_content and log_content ~= "" then %>
+        <pre class="mn-pre"><%=pcdata(log_content)%></pre>
+        <% else %>
+        <div class="mn-alert mn-alert-info"><%:No log content available.%></div>
+        <% end %>
+    </div>
+
+    <!-- Install -->
+    <div class="mn-tab-panel<%=tab=='install' and ' active' or ''%>">
+        <%
+        local ist = install_status or {}
+        local op_url = luci.dispatcher.build_url('admin/services/mynet/service/op')
+        local function status_badge(ok)
+            if ok then
+                return '<span class="mn-badge mn-badge-green">&#10003; installed</span>'
+            else
+                return '<span class="mn-badge mn-badge-gray">&#8212; missing</span>'
+            end
+        end
+        %>
+
+        <!-- mynetd init.d script -->
+        <div class="mn-card">
+            <div class="mn-card-header"><h3><%:/etc/init.d/mynetd%></h3></div>
+            <div class="mn-card-body">
+                <table class="mn-kv">
+                    <tr><th><%:File%></th>
+                        <td><code>/etc/init.d/mynetd</code>
+                        <%=status_badge(ist.mynetd_initd)%></td></tr>
+                    <tr><th><%:Autostart%></th>
+                        <td><%=ist.mynetd_enabled and '<span class="mn-running">enabled</span>' or '<span class="mn-stopped">disabled</span>'%></td></tr>
+                </table>
+                <div class="mn-service-btns" style="margin-top:10px">
+                    <form method="post" action="<%=op_url%>" style="display:inline">
+                        <input type="hidden" name="service" value="install">
+                        <input type="hidden" name="tab"     value="install">
+                        <button name="op" value="install_mynetd"   class="mn-btn mn-btn-sm mn-btn-green"><%:Install%></button>
+                        <button name="op" value="uninstall_mynetd" class="mn-btn mn-btn-sm mn-btn-red"><%:Uninstall%></button>
+                        <button name="op" value="enable_mynetd"    class="mn-btn mn-btn-sm mn-btn-secondary"><%:Enable%></button>
+                        <button name="op" value="disable_mynetd"   class="mn-btn mn-btn-sm mn-btn-secondary"><%:Disable%></button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Firewall script -->
+        <div class="mn-card" style="margin-top:12px">
+            <div class="mn-card-header"><h3><%:Firewall Script%></h3></div>
+            <div class="mn-card-body">
+                <table class="mn-kv">
+                    <tr><th><%:File%></th>
+                        <td><code>/etc/mynet/scripts/firewall.mynet</code>
+                        <%=status_badge(ist.fw_script)%></td></tr>
+                    <tr><th><%:/etc/config/firewall include%></th>
+                        <td><%=ist.fw_config_ok and '<span class="mn-running">present</span>' or '<span class="mn-stopped">not found</span>'%></td></tr>
+                </table>
+                <div class="mn-service-btns" style="margin-top:10px">
+                    <form method="post" action="<%=op_url%>" style="display:inline">
+                        <input type="hidden" name="service" value="install">
+                        <input type="hidden" name="tab"     value="install">
+                        <button name="op" value="install_fw_script"   class="mn-btn mn-btn-sm mn-btn-green"><%:Install%></button>
+                        <button name="op" value="uninstall_fw_script" class="mn-btn mn-btn-sm mn-btn-red"><%:Uninstall%></button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Route script -->
+        <div class="mn-card" style="margin-top:12px">
+            <div class="mn-card-header"><h3><%:Route Script%></h3></div>
+            <div class="mn-card-body">
+                <table class="mn-kv">
+                    <tr><th><%:File%></th>
+                        <td><code>/etc/mynet/scripts/route.mynet</code>
+                        <%=status_badge(ist.route_script)%></td></tr>
+                </table>
+                <div class="mn-service-btns" style="margin-top:10px">
+                    <form method="post" action="<%=op_url%>" style="display:inline">
+                        <input type="hidden" name="service" value="install">
+                        <input type="hidden" name="tab"     value="install">
+                        <button name="op" value="install_route_script"   class="mn-btn mn-btn-sm mn-btn-green"><%:Install%></button>
+                        <button name="op" value="uninstall_route_script" class="mn-btn mn-btn-sm mn-btn-red"><%:Uninstall%></button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mn-actions-bar">
+    <a href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>" class="mn-btn mn-btn-secondary">
+        &#8592; <%:Dashboard%>
+    </a>
+</div>
+
+<%+footer%>
