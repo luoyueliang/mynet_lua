@@ -1,11 +1,11 @@
 {
     "server_config": {
-        "api_base_url": "https://api.mynet.club/api/v1",
+        "api_base_url": "https://api.mynet.club/api/v2",
         "timeout": 30,
         "retry_count": 3
     },
     "downloads": {
-        "apps_index_url": "https://download.mynet.club/apps.json"
+        "apps_index_url": "https://ctl.mynet.club/d/apps.json"
     },
     "gnb": {
         "gnb_root": "/etc/mynet/driver/gnb",

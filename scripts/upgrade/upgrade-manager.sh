@@ -28,7 +28,8 @@ MYNET_HOME="${MYNET_HOME:-}"
 BACKUP_DIR=""
 TMP_DIR="/tmp/mynet-upgrade-$$"
 UPGRADE_LOG=""
-MANIFEST_URL="${MYNET_MANIFEST_URL:-https://download.mynet.club/mynet/manifest.json}"
+CTL_BASE_URL="${CTL_BASE_URL:-https://ctl.mynet.club}"
+MANIFEST_URL="${MYNET_MANIFEST_URL:-${CTL_BASE_URL}/api/v2/mynet/manifest.json}"
 
 # 状态变量
 SERVICE_RUNNING=false

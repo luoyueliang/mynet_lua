@@ -156,7 +156,7 @@ refresh_config() {
     local sources_dir="$MYNET_HOME/conf/proxy/proxy_sources"
     mkdir -p "$sources_dir"
     
-    local base_url="https://download.mynet.club/mynet/plugins/mp"
+    local base_url="${CTL_BASE_URL:-https://ctl.mynet.club}/plugins/mp"
     local download_ok=true
     
     # 下载 interip.txt

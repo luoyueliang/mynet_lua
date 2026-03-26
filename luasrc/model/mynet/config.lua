@@ -5,7 +5,9 @@
 local M    = {}
 local util = require("luci.model.mynet.util")
 
-M.DEFAULT_API_URL         = "https://api.mynet.club/api/v1"
+M.DEFAULT_API_URL         = "https://api.mynet.club/api/v2"
+M.DEFAULT_CTL_URL         = "https://ctl.mynet.club"
+M.DEFAULT_WWW_URL         = "https://www.mynet.club"
 M.DEFAULT_GNB_ROOT        = util.GNB_DRIVER_ROOT
 M.DEFAULT_GNB_BIN_PATH    = util.GNB_BIN_DIR .. "/gnb"
 M.DEFAULT_SYSTEM_GNB_PATH = "/usr/sbin/gnb"

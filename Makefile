@@ -12,14 +12,14 @@ define Package/luci-app-mynet
   SECTION:=luci
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
-  TITLE:=LuCI support for MyNet VPN
+  TITLE:=LuCI support for MyNet
   DEPENDS:=+luci-base +curl +luci-lib-jsonc
   PKGARCH:=all
 endef
 
 define Package/luci-app-mynet/description
-  MyNet VPN management interface for OpenWrt.
-  Provides zone/node management, config sync, and VPN control
+  MyNet management interface for OpenWrt.
+  Provides zone/node management, config sync, and service control
   through the LuCI web interface.
 endef
 

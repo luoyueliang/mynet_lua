@@ -17,16 +17,16 @@ local base_url = luci.dispatcher.build_url('admin/services/mynet/service')
 
 <div class="mn-tabs">
     <div class="mn-tab-nav">
-        <a class="mn-tab-btn<%=tab=='status' and ' active' or ''%>"  href="<%=base_url%>?tab=status"><%:VPN Service%></a>
+        <a class="mn-tab-btn<%=tab=='status' and ' active' or ''%>"  href="<%=base_url%>?tab=status"><%:Service%></a>
         <a class="mn-tab-btn<%=tab=='mynetd' and ' active' or ''%>" href="<%=base_url%>?tab=mynetd"><%:Monitor Daemon%></a>
         <a class="mn-tab-btn<%=tab=='log' and ' active' or ''%>"    href="<%=base_url%>?tab=log"><%:Logs%></a>
         <a class="mn-tab-btn<%=tab=='install' and ' active' or ''%>" href="<%=base_url%>?tab=install"><%:Install%></a>
     </div>
 
-    <!-- VPN Service -->
+    <!-- Service -->
     <div class="mn-tab-panel<%=tab=='status' and ' active' or ''%>">
         <div class="mn-card">
-            <div class="mn-card-header"><h3><%:mynet (VPN Service)%></h3></div>
+            <div class="mn-card-header"><h3><%:mynet (Service)%></h3></div>
             <div class="mn-card-body">
                 <div class="mn-service-row">
                     <span class="mn-service-name">/etc/init.d/mynet</span>
@@ -54,7 +54,7 @@ local base_url = luci.dispatcher.build_url('admin/services/mynet/service')
 
         <% if vpn_iface then %>
         <div class="mn-card" style="margin-top:12px">
-            <div class="mn-card-header"><h3><%:VPN Interface%></h3></div>
+            <div class="mn-card-header"><h3><%:Network Interface%></h3></div>
             <div class="mn-card-body">
                 <table class="mn-kv">
                     <tr><th><%:Interface%></th><td><code><%=pcdata(vpn_iface.interface or "")%></code></td></tr>

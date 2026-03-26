@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # mynet_proxy Web 安装脚本
-# 用法: curl -fsSL https://download.mynet.club/mp/install.sh | bash
-#       或: wget -qO- https://download.mynet.club/mp/install.sh | bash
+# 用法: curl -fsSL https://ctl.mynet.club/mp/install.sh | bash
+#       或: wget -qO- https://ctl.mynet.club/mp/install.sh | bash
 #
 
 set -e
@@ -111,7 +111,7 @@ main() {
     if [[ $EUID -ne 0 ]]; then
         log_error "需要 root 权限"
         echo "请使用 sudo 运行:"
-        echo "  curl -fsSL https://download.mynet.club/mp/install.sh | sudo bash"
+        echo "  curl -fsSL https://ctl.mynet.club/mp/install.sh | sudo bash"
         exit 1
     fi
     
@@ -136,7 +136,7 @@ main() {
     
     # 下载最新版本信息
     log_step "获取最新版本..."
-    local base_url="https://download.mynet.club/mynet/mp"
+    local base_url="${CTL_BASE_URL:-https://ctl.mynet.club}/mp"
     local version="WEBINSTALL_VERSION"
     
     log_info "版本: $version"

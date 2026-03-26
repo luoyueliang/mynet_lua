@@ -864,6 +864,16 @@ function api_vpn_start()
     local c = cred_m.load()
     if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
 
+    -- Pre-flight config check
+    local node_id = cfg_m.get_node_id()
+    if node_id and tonumber(node_id) and tonumber(node_id) > 0 then
+        local check = node_m.check_config(tonumber(node_id))
+        if not check.ok then
+            json_ok({ success = false, message = "config check failed: " .. table.concat(check.errors, "; ") })
+            return
+        end
+    end
+
     local ok, code = node_m.start_vpn()
     json_ok({ success = ok, message = ok and "VPN started" or ("start failed: code=" .. tostring(code)) })
 end
@@ -1025,6 +1035,17 @@ end
 function api_svc_start()
     local c = cred_m.load()
     if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+
+    -- Pre-flight config check
+    local node_id = cfg_m.get_node_id()
+    if node_id and tonumber(node_id) and tonumber(node_id) > 0 then
+        local check = node_m.check_config(tonumber(node_id))
+        if not check.ok then
+            json_ok({ success = false, message = "config check failed: " .. table.concat(check.errors, "; ") })
+            return
+        end
+    end
+
     local _, code = util.exec_status("/etc/init.d/mynet start 2>&1")
     json_ok({ success = code == 0, message = code == 0 and "mynet started" or ("start failed (code=" .. tostring(code) .. ")") })
 end

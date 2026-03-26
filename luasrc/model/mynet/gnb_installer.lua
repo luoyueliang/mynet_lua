@@ -14,13 +14,14 @@
 local M = {}
 
 local util = require("luci.model.mynet.util")
+local mynet_config = require("luci.model.mynet.config")
 
 -- ─────────────────────────────────────────────────────────────
 -- 常量
 -- ─────────────────────────────────────────────────────────────
 M.LOCK_FILE   = "/var/run/mynet_gnb_install.lock"
 M.LOG_FILE    = "/var/log/mynet_gnb_install.log"
-M.APPS_INDEX  = "https://download.mynet.club/apps.json"
+M.APPS_INDEX  = mynet_config.DEFAULT_CTL_URL .. "/d/apps.json"
 M.SCRIPT_PATH = "/tmp/mynet_install_gnb.sh"
 
 -- ─────────────────────────────────────────────────────────────

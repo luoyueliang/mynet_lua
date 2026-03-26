@@ -1,6 +1,6 @@
-# mynet-luci — MyNet VPN LuCI 管理界面
+# mynet-luci — MyNet LuCI 管理界面
 
-基于 OpenWrt LuCI 框架的 MyNet VPN Web 管理界面，对应 Go 版 `mynet_tui` 的全部核心功能。
+基于 OpenWrt LuCI 框架的 MyNet Web 管理界面，对应 Go 版 `mynet_tui` 的全部核心功能。
 
 ## 功能
 
@@ -8,8 +8,8 @@
 - 区域（Zone）列表与切换
 - 节点（Node）列表、详情、状态查看
 - 配置同步（node.conf / route.conf / address.conf）
-- VPN 服务启停（调用 `/etc/init.d/mynet`）
-- 系统状态监控（VPN 接口、运行时间、负载）
+- 服务启停（调用 `/etc/init.d/mynet`）
+- 系统状态监控（网络接口、运行时间、负载）
 - 设置页面（API 服务器地址）
 
 ## 项目结构
@@ -81,7 +81,7 @@ make package/mynet-luci/compile V=s
 | `luci-base` | LuCI 框架核心 |
 | `curl` | HTTP 请求（API 通信）|
 | `luci-lib-jsonc` | JSON 解析 |
-| `mynet` | MyNet VPN 主程序 |
+| `mynet` | MyNet 主程序 |
 
 ## API 对接
 

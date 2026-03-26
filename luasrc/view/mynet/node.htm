@@ -53,7 +53,7 @@ local vpn_running = (vpn_status == "running")
             </td>
         </tr>
         <tr>
-            <th><%:VPN Type%></th>
+            <th><%:Protocol%></th>
             <td><span class="mn-badge"><%=pcdata(node_info.vpn_type or "—")%></span></td>
         </tr>
         <tr>
@@ -83,7 +83,7 @@ local vpn_running = (vpn_status == "running")
         </tr>
         <% end %>
         <tr>
-            <th>VPN</th>
+            <th><%:Service%></th>
             <td>
                 <span id="mn-vpn-dot" class="mn-dot <%=vpn_running and 'mn-dot-green' or 'mn-dot-red'%>"></span>
                 <% if vpn_running then %>
@@ -184,7 +184,7 @@ local vpn_running = (vpn_status == "running")
             <% else %>
             <span class="mn-badge mn-badge-warn" title="<%:File empty or missing%>">&mdash;</span>
             <% end %>
-            <span class="mn-config-hint mn-muted mn-small"><%:VPN routing rules%></span>
+            <span class="mn-config-hint mn-muted mn-small"><%:Routing rules%></span>
             <div class="mn-flex-gap">
                 <span class="mn-config-status" id="mn-cfg-route-status"></span>
                 <button class="mn-btn mn-btn-sm"

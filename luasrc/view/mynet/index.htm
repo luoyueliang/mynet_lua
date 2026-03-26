@@ -2,7 +2,7 @@
     <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
 
     <h2>
-        <%:MyNet VPN%> — <%:Dashboard%>
+        <%:MyNet%> — <%:Dashboard%>
     </h2>
 
     <% local running=(vpn_status=="running" ) %>
@@ -47,7 +47,7 @@
             </tr>
             <% end %>
             <tr>
-                <th>VPN</th>
+                <th><%:Tunnel%></th>
                 <td>
                     <% if ri.vpn_iface and ri.vpn_iface ~= "" then %>
                         <code><%=pcdata(ri.vpn_iface)%></code>
@@ -55,7 +55,7 @@
                     <% else %>
                         <span class="mn-muted">—</span>
                     <% end %>
-                    &emsp;<span class="mn-running"><%=tostring(ri.vpn_routes or 0)%> VPN routes</span>&nbsp;<span class="mn-muted">/ <%=tostring(ri.total_routes or 0)%> <%:total%></span>
+                    &emsp;<span class="mn-running"><%=tostring(ri.vpn_routes or 0)%> <%:routes%></span>&nbsp;<span class="mn-muted">/ <%=tostring(ri.total_routes or 0)%> <%:total%></span>
                 </td>
             </tr>
             <tr>
@@ -80,7 +80,7 @@
                     <% if node_id and tostring(node_id) ~= "0" then %>
                         <code>#<%= type(node_id)=="number" and string.format("%.0f",node_id) or tostring(node_id) %></code>
                         <% if ri.vpn_iface and ri.vpn_iface ~= "" then %>&nbsp;<span class="mn-muted">via <code><%=pcdata(ri.vpn_iface)%></code></span><% end %>
-                        &nbsp;<% if running then %><span class="mn-dep-ok">VPN <%:Running%></span><% else %><span class="mn-dep-fail">VPN <%:Stopped%></span><% end %>
+                        &nbsp;<% if running then %><span class="mn-dep-ok"><%:Service%> <%:Running%></span><% else %><span class="mn-dep-fail"><%:Service%> <%:Stopped%></span><% end %>
                     <% else %>
                         <span class="mn-dep-fail"><%:Not configured%></span>
                         &nbsp;<a class="mn-link" href="<%=luci.dispatcher.build_url('admin/services/mynet/wizard?tab=node')%>"><%:→ Wizard%></a>
@@ -139,12 +139,12 @@
 
         <div class="mn-grid">
 
-            <!-- VPN 状态卡 -->
+            <!-- 服务状态卡 -->
             <div class="mn-card">
                 <div class="mn-card-header">
                     <span class="mn-dot <%=running and 'mn-dot-green' or 'mn-dot-red'%>"></span>
                     <h3>
-                        <%:VPN Service%>
+                        <%:Service%>
                     </h3>
                 </div>
                 <div class="mn-card-body">
@@ -346,7 +346,7 @@
 
         <script src="<%=resource%>/mynet/js/mynet.js"></script>
         <script>
-            // 自动刷新 VPN 状态（每 15 秒）
+            // 自动刷新服务状态（每 15 秒）
             setInterval(function () { mnRefreshStatus(); }, 15000);
             // 页面加载后自动检测 GNB；若缺失则触发后台安装
             document.addEventListener('DOMContentLoaded', function () {
