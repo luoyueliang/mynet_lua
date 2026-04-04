@@ -13,7 +13,7 @@ define Package/luci-app-mynet
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI support for MyNet VPN
-  DEPENDS:=+luci-base +curl +luci-lib-jsonc
+  DEPENDS:=+luci-base +curl +luci-lib-jsonc +bash +kmod-tun
   PKGARCH:=all
 endef
 
@@ -27,25 +27,105 @@ define Build/Compile
 endef
 
 define Package/luci-app-mynet/install
+	# --- LuCI controller ---
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DATA) ./luasrc/controller/mynet.lua $(1)/usr/lib/lua/luci/controller/
 
+	# --- LuCI model ---
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/mynet
 	$(INSTALL_DATA) ./luasrc/model/mynet/*.lua $(1)/usr/lib/lua/luci/model/mynet/
 
-	$(INSTALL_DIR) $(1)/usr/share/luci/view/mynet
-	$(INSTALL_DATA) ./luasrc/view/mynet/*.htm $(1)/usr/share/luci/view/mynet/
+	# --- LuCI view ---
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/mynet
+	$(INSTALL_DATA) ./luasrc/view/mynet/*.htm $(1)/usr/lib/lua/luci/view/mynet/
 
+	# --- Static assets ---
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/mynet/css
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/mynet/css/mynet.css \
 		$(1)/www/luci-static/resources/mynet/css/
-
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/mynet/js
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/mynet/js/mynet.js \
 		$(1)/www/luci-static/resources/mynet/js/
 
+	# --- Default config ---
 	$(INSTALL_DIR) $(1)/etc/mynet/conf
 	$(INSTALL_CONF) ./root/etc/mynet/conf/config.json $(1)/etc/mynet/conf/
+
+	# --- Runtime scripts: _src/common ---
+	$(INSTALL_DIR) $(1)/etc/mynet/scripts/_src/common
+	$(INSTALL_BIN) ./scripts/_src/common/common.sh $(1)/etc/mynet/scripts/_src/common/
+	$(INSTALL_BIN) ./scripts/_src/common/route.sh $(1)/etc/mynet/scripts/_src/common/
+	$(INSTALL_BIN) ./scripts/_src/common/vpn.sh $(1)/etc/mynet/scripts/_src/common/
+
+	# --- Runtime scripts: _src/openwrt ---
+	$(INSTALL_DIR) $(1)/etc/mynet/scripts/_src/openwrt
+	$(INSTALL_BIN) ./scripts/_src/openwrt/service-manager.sh $(1)/etc/mynet/scripts/_src/openwrt/
+	$(INSTALL_DIR) $(1)/etc/mynet/scripts/_src/openwrt/runtime/modules
+	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/modules/firewall.sh \
+		$(1)/etc/mynet/scripts/_src/openwrt/runtime/modules/
+	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/modules/route.sh \
+		$(1)/etc/mynet/scripts/_src/openwrt/runtime/modules/
+	$(INSTALL_DATA) ./scripts/_src/openwrt/runtime/firewall.mynet \
+		$(1)/etc/mynet/scripts/_src/openwrt/runtime/
+	$(INSTALL_DATA) ./scripts/_src/openwrt/runtime/route.mynet \
+		$(1)/etc/mynet/scripts/_src/openwrt/runtime/
+
+	# --- Init script (rc.mynet → /etc/init.d/mynet) ---
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/rc.mynet $(1)/etc/init.d/mynet
+
+	# --- Runtime scripts: proxy ---
+	$(INSTALL_DIR) $(1)/etc/mynet/scripts/proxy/hooks
+	$(INSTALL_BIN) ./scripts/proxy/proxy.sh $(1)/etc/mynet/scripts/proxy/
+	$(INSTALL_BIN) ./scripts/proxy/hooks/pre_start.sh $(1)/etc/mynet/scripts/proxy/hooks/
+	$(INSTALL_BIN) ./scripts/proxy/hooks/post_start.sh $(1)/etc/mynet/scripts/proxy/hooks/
+	$(INSTALL_BIN) ./scripts/proxy/hooks/stop.sh $(1)/etc/mynet/scripts/proxy/hooks/
+	$(INSTALL_DIR) $(1)/etc/mynet/scripts/proxy/openwrt
+	$(INSTALL_BIN) ./scripts/proxy/openwrt/route_policy.sh \
+		$(1)/etc/mynet/scripts/proxy/openwrt/
+
+	# --- Runtime scripts: tools (optional diagnostics) ---
+	$(INSTALL_DIR) $(1)/etc/mynet/scripts/tools
+	$(INSTALL_BIN) ./scripts/tools/check_openwrt_masq.sh $(1)/etc/mynet/scripts/tools/
+	$(INSTALL_BIN) ./scripts/tools/diagnose_network.sh $(1)/etc/mynet/scripts/tools/
+	$(INSTALL_BIN) ./scripts/tools/optimize_gnb_conntrack.sh $(1)/etc/mynet/scripts/tools/
+
+	# --- curl TLS fix helper ---
+	$(INSTALL_DIR) $(1)/usr/sbin
+	$(INSTALL_BIN) ./root/usr/sbin/mynet-fix-curl $(1)/usr/sbin/
+
+	# --- Runtime directories (empty, needed at runtime) ---
+	$(INSTALL_DIR) $(1)/etc/mynet/logs
+	$(INSTALL_DIR) $(1)/etc/mynet/driver/gnb
+	$(INSTALL_DIR) $(1)/etc/mynet/scripts
+
+	# --- i18n translations ---
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
+	for pofile in $(CURDIR)/po/*/mynet.po; do \
+		lang=$$(basename $$(dirname $$pofile)); \
+		python3 $(CURDIR)/tools/po2lmo.py $$pofile \
+			$(1)/usr/lib/lua/luci/i18n/mynet.$$lang.lmo; \
+	done
+endef
+
+define Package/luci-app-mynet/postinst
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+# Enable and load tun module
+modprobe tun 2>/dev/null
+# Clear LuCI cache
+rm -rf /tmp/luci-*
+# Enable mynet service (don't start — user needs to configure first)
+/etc/init.d/mynet enable 2>/dev/null
+exit 0
+endef
+
+define Package/luci-app-mynet/prerm
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+/etc/init.d/mynet stop 2>/dev/null
+/etc/init.d/mynet disable 2>/dev/null
+exit 0
 endef
 
 $(eval $(call BuildPackage,luci-app-mynet))

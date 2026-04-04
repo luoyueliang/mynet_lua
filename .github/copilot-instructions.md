@@ -1,0 +1,165 @@
+# GitHub Copilot 编码规范 — mynet_lua
+
+本文件基于项目历史错误总结的强制规范。所有 AI 辅助代码必须遵循。
+
+---
+
+## 🚫 禁止行为（Prohibited Behaviors）
+
+### 1. node_id 科学计数法（Critical Bug）
+```lua
+-- ❌ 禁止：Lua 大整数用 tostring() 会产生 "3.84e+15" 科学计数法
+local endpoint = "/nodes/" .. tostring(node_id)
+local path = "/conf/" .. tostring(node_id) .. "/node.conf"
+
+-- ✅ 必须：使用 util.int_str() 或本地 nid() helper
+local function nid(v) return util.int_str(v) end
+local endpoint = "/nodes/" .. nid(node_id)
+```
+
+### 2. JS 中 node_id 作为数字字面量（Critical Bug）
+```lua
+-- ❌ 禁止：大整数作为 JS 数字会丢失精度并产生科学计数法
+window.mnCurrentNodeId = <%=cur_nid_str%>;
+
+-- ✅ 必须：用字符串字面量（加引号）
+window.mnCurrentNodeId = "<%=cur_nid_str%>";
+```
+
+### 3. API URL 硬编码路径
+```javascript
+// ❌ 禁止：硬编码路径中遗漏 /services/ 段
+var baseUrl = window.location.pathname.replace(/\/admin\/mynet\//, '/admin/mynet/api/');
+
+// ✅ 必须：使用 _mnApiBase() 函数
+var url = _mnApiBase() + action;
+```
+
+### 4. JSON fallback 编码数字
+```lua
+-- ❌ 禁止：Lua fallback JSON encoder 直接 tostring(number)
+if t == "number" then return tostring(obj) end
+
+-- ✅ 必须：整数用 %.0f 格式
+if t == "number" then
+    if obj == math.floor(obj) and obj >= -1e15 and obj <= 1e15 then
+        return string.format("%.0f", obj)
+    end
+    return tostring(obj)
+end
+```
+
+### 5. 引用已废弃的视图/路由
+以下文件/路由已删除，禁止引用：
+- `luasrc/view/mynet/zones.htm` → 已删除
+- `luasrc/view/mynet/nodes.htm` → 已删除
+- `luasrc/view/mynet/node_detail.htm` → 已删除
+- `/admin/services/mynet/zones` → 重定向到 `/node`
+- `/admin/services/mynet/nodes` → 重定向到 `/node`
+- `/admin/services/mynet/nodes/detail` → 不再存在
+
+### 6. 私钥长度校验错误
+```lua
+-- ❌ 禁止：GNB 私钥是 64 字节 = 128 hex chars，不是 64
+if #key_hex ~= 64 then ...
+
+-- ✅ 正确：
+if #key_hex ~= 128 then ...
+```
+
+### 7. 直接 require 在函数注册之外加载重模块
+```lua
+-- ❌ 禁止：顶层 require 重型模块会在每次请求时加载
+local gnb_m = require("luci.model.mynet.gnb_installer")
+
+-- ✅ 必须：在函数体内懒加载
+function api_gnb_auto_install()
+    local gnb_m = require("luci.model.mynet.gnb_installer")
+    ...
+end
+```
+
+### 8. LuCI 模板 `<% else %>` / `<% elseif %>` / `<% end %>` 中使用 `--` 注释（Critical Bug）
+```lua
+-- ❌ 禁止：C 模板解析器会将注释后的 write() 调用吞掉，导致行号偏移和语法错误
+<% else -- tab == "config" %>
+<% elseif x then -- fallback %>
+<% end -- closing if %>
+
+-- ✅ 必须：else/elseif/end 标签中不加 Lua 注释
+<% else %>
+<% elseif x then %>
+<% end %>
+
+-- ✅ 注释放在 HTML 注释（在 <% %> 标签外面）
+<% end %> <!-- closing tab if -->
+<% else %>
+<!-- tab == "config" -->
+```
+
+---
+
+## ✅ 必须遵守的规范
+
+### node_id 处理
+- Lua 侧所有 node_id 用于路径/API 时必须经过 `util.int_str(v)` 或 `nid(v)` 转换
+- node.lua 顶部定义：`local function nid(v) return util.int_str(v) end`
+- JS 侧 `window.mnCurrentNodeId` 必须是字符串
+
+### API URL 构造
+- JS 侧所有 API 调用必须使用 `_mnApiBase()` 函数
+- `_mnApiBase()` 定义：`window.location.pathname.replace(/\/admin\/services\/mynet.*$/, '/admin/services/mynet/api/')`
+
+### 依赖自动安装
+- `gnb_ctl`：通过 `gnb_installer.start_auto_install()` 后台安装
+- `kmod-tun`：`opkg install kmod-tun && modprobe tun`
+- `bash`：`opkg install bash`
+- `libcurl-gnutls4`：解决 mbedTLS TLS 握手失败
+- `ca-bundle`：CA 证书包
+
+### GNB 密钥格式
+- 私钥：128 hex chars（64字节）= SHA512(32-byte-seed)
+- 公钥：64 hex chars（32字节）
+- `gnb_crypto -c` 总是生成新密钥对，不会复用已有私钥文件
+- 上传公钥：`PUT /nodes/{id}/keys` body: `{ public_key: "hex..." }`
+
+### view/model 约定
+- 页面 node.htm 中 `nid_fmt()` 辅助函数用于格式化模板内整数
+- 所有视图中引用 zone 时检查 `zone ~= nil` 和 `zone.zone_name ~= ""`
+- route.conf 更新必须同时下载所有对端节点公钥写入 ed25519 目录
+
+### 部署
+- 同步命令：`bash debug/sync.sh all`
+- VM 文件删除需手动：`ssh openwrt-qemu "rm -f /path"`
+- 语法验证：`ssh openwrt-qemu "lua /path/to/file.lua 2>&1"`（空输出=无错误）
+
+---
+
+## 项目架构速查
+
+```
+luasrc/
+  controller/mynet.lua    路由注册 + Action handlers + API handlers
+  model/mynet/
+    api.lua               HTTP REST 客户端（curl封装）
+    auth.lua              登录/Token刷新
+    config.lua            本地配置读写
+    credential.lua        凭证持久化
+    gnb_installer.lua     GNB 自动检测安装
+    node.lua              节点管理（nid() helper 在顶部）
+    system.lua            系统信息/依赖检查
+    util.lua              基础工具（int_str/json/exec/file IO）
+    zone.lua              Zone 管理
+  view/mynet/
+    index.htm             Dashboard
+    login.htm             登录
+    node.htm              节点配置（主要操作页）
+    wizard.htm            首次配置向导
+    service.htm / network.htm / settings.htm / status.htm / gnb_monitor.htm
+
+htdocs/luci-static/resources/mynet/
+  css/mynet.css
+  js/mynet.js             前端：mnApi / mnNodeSwitch / mnNodeGenKey 等
+
+root/etc/mynet/conf/config.json   设备本地配置
+```

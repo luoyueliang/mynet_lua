@@ -25,6 +25,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MYNET_HOME="$(dirname "$SCRIPT_DIR")"
 
+# ─── 日志捕获 ───
+MYNET_LOG_DIR="$MYNET_HOME/logs"
+mkdir -p "$MYNET_LOG_DIR" 2>/dev/null || true
+MYNET_SCRIPT_LOG="$MYNET_LOG_DIR/route_policy.log"
+exec > >(tee -a "$MYNET_SCRIPT_LOG") 2>&1
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] route_policy.sh $*"
+
 # 验证 MYNET_HOME
 if [ ! -f "$MYNET_HOME/conf/mynet.conf" ]; then
     echo "[ERROR] 无法找到 mynet.conf: $MYNET_HOME/conf/mynet.conf"
@@ -148,69 +155,11 @@ start() {
     esac
 
     echo "[INFO] ✓ 代理路由已启动"
-
-    # 启动 peer 公网IP动态监控 (已禁用 - 2025-12-08)
-    # 原因: 排除 GNB peer IP 导致连接不稳定，UDP协议通过GNB反而更稳定
-    # local monitor_script="$SCRIPT_DIR/proxy_ex_monitor.sh"
-    # if [ -f "$monitor_script" ] && [ -x "$monitor_script" ]; then
-    #     echo "[INFO] 启动 peer 公网IP监控..."
-    #     "$monitor_script" start
-    # fi
 }
 
 # iptables + ipset 模式 (fw3 / 传统 Linux)
 start_iptables() {
     echo "[INFO] 使用 iptables + ipset 模式"
-
-    # 排除索引服务器IP（从 address.conf 读取 - 已禁用 2025-12-08）
-    # 原因: 排除 GNB address.conf 中的IP导致连接不稳定
-    # UDP 协议通过 GNB 转发反而更稳定（路径优化 + 协议优势）
-    # local vpn_type=$(grep "^VPN_TYPE=" "$MYNET_HOME/conf/mynet.conf" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | head -1)
-    #
-    # if [ "$vpn_type" = "gnb" ]; then
-    #     local node_id=""
-    #     if [ -f "$MYNET_HOME/conf/mynet.conf" ]; then
-    #         node_id=$(grep "^# Node:" "$MYNET_HOME/conf/mynet.conf" | sed -n 's/.*ID: \([0-9]*\).*/\1/p')
-    #     fi
-    #
-    #     if [ -n "$node_id" ]; then
-    #         local address_conf="$MYNET_HOME/driver/gnb/conf/$node_id/address.conf"
-    #         if [ -f "$address_conf" ]; then
-    #             echo "[INFO] 读取GNB索引服务器配置..."
-    #             while read -r line; do
-    #                 [[ "$line" =~ ^# ]] && continue
-    #                 [[ -z "$line" ]] && continue
-    #
-    #                 # address.conf 索引服务器行格式: i|...
-    #                 if [[ "$line" =~ ^i\| ]]; then
-    #                     # IP/域名始终在第三段（用|分割）
-    #                     local addr=$(echo "$line" | awk -F'|' '{print $3}' | xargs)
-    #
-    #                     # 如果是IPv4地址，直接使用
-    #                     if [[ "$addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    #                         if ! iptables -w 5 -t mangle -C PREROUTING -d "$addr" -j ACCEPT 2>/dev/null; then
-    #                             iptables -w 5 -t mangle -I PREROUTING -d "$addr" -j ACCEPT
-    #                             echo "[INFO] ✓ 已排除索引服务器: $addr"
-    #                         fi
-    #                     # 如果是域名，解析为IPv4（过滤IPv6）
-    #                     elif [[ ! "$addr" =~ : ]]; then
-    #                         # 使用nslookup（OpenWrt兼容）
-    #                         local resolved_ips=$(nslookup "$addr" 2>/dev/null | awk '/^Address[[:space:]]*[0-9]*:/ {print $NF}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
-    #                         if [ -n "$resolved_ips" ]; then
-    #                             while read -r ip; do
-    #                                 if ! iptables -w 5 -t mangle -C PREROUTING -d "$ip" -j ACCEPT 2>/dev/null; then
-    #                                     iptables -w 5 -t mangle -I PREROUTING -d "$ip" -j ACCEPT
-    #                                     echo "[INFO] ✓ 已排除索引服务器: $ip (from $addr)"
-    #                                 fi
-    #                             done <<< "$resolved_ips"
-    #                         fi
-    #                     fi
-    #                     # IPv6地址直接跳过（代理不支持）
-    #                 fi
-    #             done < "$address_conf"
-    #         fi
-    #     fi
-    # fi
 
     # 创建 ipset
     ipset create $IPSET_NAME hash:net 2>/dev/null || ipset flush $IPSET_NAME
@@ -423,9 +372,6 @@ start_iptables() {
 
     echo "[INFO] ✓ iptables 规则已配置（PREROUTING 转发流量，排除 $GNB_INTERFACE）"
 
-    # OUTPUT: 路由器本机流量（可选，某些场景可能导致GNB循环）
-    # iptables -w 5 -t mangle -C OUTPUT -m set --match-set $IPSET_NAME dst -j MARK --set-mark $FWMARK 2>/dev/null || \
-    #     iptables -w 5 -t mangle -A OUTPUT -m set --match-set $IPSET_NAME dst -j MARK --set-mark $FWMARK
     echo "[INFO] ℹ️  注意：暂不支持路由器本机代理（OUTPUT链会导致 GNB 循环）"
 
     # 配置策略路由
@@ -455,60 +401,6 @@ start_iptables() {
 start_nftables() {
     echo "[INFO] 使用 nftables 模式"
 
-    # 排除索引服务器IP（从 address.conf 读取 - 已禁用 2025-12-08）
-    # 原因: 排除 GNB address.conf 中的IP导致连接不稳定
-    # UDP 协议通过 GNB 转发反而更稳定（路径优化 + 协议优势）
-    # local vpn_type=$(grep "^VPN_TYPE=" "$MYNET_HOME/conf/mynet.conf" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | head -1)
-    #
-    # local index_exclude_ips=""
-    # if [ "$vpn_type" = "gnb" ]; then
-    #     local node_id=""
-    #     if [ -f "$MYNET_HOME/conf/mynet.conf" ]; then
-    #         node_id=$(grep "^# Node:" "$MYNET_HOME/conf/mynet.conf" | sed -n 's/.*ID: \([0-9]*\).*/\1/p')
-    #     fi
-    #
-    #     if [ -n "$node_id" ]; then
-    #         local address_conf="$MYNET_HOME/driver/gnb/conf/$node_id/address.conf"
-    #         if [ -f "$address_conf" ]; then
-    #             echo "[INFO] 读取GNB索引服务器配置..."
-    #             while read -r line; do
-    #                 [[ "$line" =~ ^# ]] && continue
-    #                 [[ -z "$line" ]] && continue
-    #
-    #                 # address.conf 索引服务器行格式: i|...
-    #                 if [[ "$line" =~ ^i\| ]]; then
-    #                     # IP/域名始终在第三段（用|分割）
-    #                     local addr=$(echo "$line" | awk -F'|' '{print $3}' | xargs)
-    #
-    #                     # 如果是IPv4地址，直接使用
-    #                     if [[ "$addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    #                         if [ -z "$index_exclude_ips" ]; then
-    #                             index_exclude_ips="$addr"
-    #                         else
-    #                             index_exclude_ips="$index_exclude_ips,$addr"
-    #                         fi
-    #                         echo "[INFO] ✓ 将排除索引服务器: $addr"
-    #                     # 如果是域名，解析为IPv4（过滤IPv6）
-    #                     elif [[ ! "$addr" =~ : ]]; then
-    #                         # 使用nslookup（OpenWrt兼容）
-    #                         local resolved_ips=$(nslookup "$addr" 2>/dev/null | awk '/^Address[[:space:]]*[0-9]*:/ {print $NF}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
-    #                         if [ -n "$resolved_ips" ]; then
-    #                             while read -r ip; do
-    #                                 if [ -z "$index_exclude_ips" ]; then
-    #                                     index_exclude_ips="$ip"
-    #                                 else
-    #                                     index_exclude_ips="$index_exclude_ips,$ip"
-    #                                 fi
-    #                                 echo "[INFO] ✓ 将排除索引服务器: $ip (from $addr)"
-    #                             done <<< "$resolved_ips"
-    #                         fi
-    #                     fi
-    #                     # IPv6地址直接跳过（代理不支持）
-    #                 fi
-    #             done < "$address_conf"
-    #         fi
-    #     fi
-    # fi
     local index_exclude_ips=""  # 保留变量声明，避免后续代码报错
 
     # 检查配置文件
@@ -729,16 +621,196 @@ start_nftables() {
     echo "[INFO]    - 本机流量: 走默认路由（不代理）"
 }
 
+# ─────────────────────────────────────────────────────────
+# Server 模式支持（Phase 8.1）
+# OpenWrt 作为 proxy server — 出口节点 NAT + FORWARD
+# ─────────────────────────────────────────────────────────
+
+start_server_mode() {
+    echo "[INFO] 启动 Server 模式..."
+
+    # 1. 启用 ip_forward
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
+
+    # 检测 WAN 接口
+    local wan_iface=""
+    wan_iface=$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)
+    if [ -z "$wan_iface" ]; then
+        echo "[ERROR] 无法检测 WAN 接口"
+        return 1
+    fi
+    echo "[INFO] WAN 接口: $wan_iface"
+
+    # 检测 VPN 接口
+    local tun_iface=""
+    if [ -f "$MYNET_HOME/conf/mynet.conf" ]; then
+        tun_iface=$(grep "^VPN_INTERFACE=" "$MYNET_HOME/conf/mynet.conf" | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+    fi
+    if [ -z "$tun_iface" ]; then
+        tun_iface=$(ip link show | grep -o 'gnb_tun[^:]*' | head -1)
+    fi
+    if [ -z "$tun_iface" ]; then
+        echo "[ERROR] 无法检测 VPN 接口"
+        return 1
+    fi
+    echo "[INFO] VPN 接口: $tun_iface"
+
+    case "$FW_TYPE" in
+        nftables)
+            nft add table inet mynet_proxy 2>/dev/null || true
+            # MASQUERADE — VPN 子网流量 NAT 到 WAN
+            nft delete chain inet mynet_proxy server_postrouting 2>/dev/null || true
+            nft add chain inet mynet_proxy server_postrouting { type nat hook postrouting priority srcnat\; }
+            nft add rule inet mynet_proxy server_postrouting oifname "$wan_iface" masquerade
+            # FORWARD — 允许 VPN→WAN 转发
+            nft delete chain inet mynet_proxy server_forward 2>/dev/null || true
+            nft add chain inet mynet_proxy server_forward { type filter hook forward priority filter\; }
+            nft add rule inet mynet_proxy server_forward iifname "$tun_iface" oifname "$wan_iface" accept
+            nft add rule inet mynet_proxy server_forward iifname "$wan_iface" oifname "$tun_iface" ct state established,related accept
+            # 可选：加载白名单
+            local whitelist="$MYNET_HOME/conf/proxy/proxy_whitelist.txt"
+            if [ -f "$whitelist" ]; then
+                nft add set inet mynet_proxy server_whitelist { type ipv4_addr\; } 2>/dev/null || true
+                while read -r ip; do
+                    [[ "$ip" =~ ^# ]] && continue
+                    [[ -z "$ip" ]] && continue
+                    nft add element inet mynet_proxy server_whitelist { "$ip" } 2>/dev/null
+                done < "$whitelist"
+                # 仅允许白名单 peer 使用 server
+                nft insert rule inet mynet_proxy server_forward iifname "$tun_iface" ip saddr != @server_whitelist drop
+                echo "[INFO] ✓ 白名单已加载"
+            fi
+            ;;
+        iptables)
+            # MASQUERADE
+            iptables -w 5 -t nat -C POSTROUTING -o "$wan_iface" -j MASQUERADE 2>/dev/null || \
+                iptables -w 5 -t nat -A POSTROUTING -o "$wan_iface" -j MASQUERADE
+            # FORWARD
+            iptables -w 5 -C FORWARD -i "$tun_iface" -o "$wan_iface" -j ACCEPT 2>/dev/null || \
+                iptables -w 5 -A FORWARD -i "$tun_iface" -o "$wan_iface" -j ACCEPT
+            iptables -w 5 -C FORWARD -i "$wan_iface" -o "$tun_iface" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || \
+                iptables -w 5 -A FORWARD -i "$wan_iface" -o "$tun_iface" -m state --state ESTABLISHED,RELATED -j ACCEPT
+            ;;
+    esac
+
+    echo "[INFO] ✓ Server 模式已启动 ($tun_iface → $wan_iface)"
+}
+
+stop_server_mode() {
+    echo "[INFO] 停止 Server 模式..."
+    case "$FW_TYPE" in
+        nftables)
+            nft delete chain inet mynet_proxy server_postrouting 2>/dev/null || true
+            nft delete chain inet mynet_proxy server_forward 2>/dev/null || true
+            nft delete set inet mynet_proxy server_whitelist 2>/dev/null || true
+            ;;
+        iptables)
+            local wan_iface=$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)
+            local tun_iface=""
+            if [ -f "$MYNET_HOME/conf/mynet.conf" ]; then
+                tun_iface=$(grep "^VPN_INTERFACE=" "$MYNET_HOME/conf/mynet.conf" | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+            fi
+            [ -z "$tun_iface" ] && tun_iface=$(ip link show | grep -o 'gnb_tun[^:]*' | head -1)
+            if [ -n "$wan_iface" ] && [ -n "$tun_iface" ]; then
+                iptables -w 5 -t nat -D POSTROUTING -o "$wan_iface" -j MASQUERADE 2>/dev/null || true
+                iptables -w 5 -D FORWARD -i "$tun_iface" -o "$wan_iface" -j ACCEPT 2>/dev/null || true
+                iptables -w 5 -D FORWARD -i "$wan_iface" -o "$tun_iface" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+            fi
+            ;;
+    esac
+    echo "[INFO] ✓ Server 模式已停止"
+}
+
+# ─────────────────────────────────────────────────────────
+# DNS 劫持（Phase 8.2）
+# 三种模式: redirect (DNAT 53) / resolv (修改 resolv.conf) / none
+# ─────────────────────────────────────────────────────────
+
+start_dns_intercept() {
+    local dns_mode="${1:-none}"
+    local dns_server="${2:-}"
+
+    if [ "$dns_mode" = "none" ] || [ -z "$dns_mode" ]; then
+        echo "[INFO] DNS 劫持: 未启用"
+        return 0
+    fi
+
+    if [ -z "$dns_server" ]; then
+        echo "[ERROR] DNS 劫持需要指定 DNS 服务器地址"
+        return 1
+    fi
+
+    echo "[INFO] DNS 劫持模式: $dns_mode → $dns_server"
+
+    case "$dns_mode" in
+        redirect)
+            # DNAT — LAN 设备 DNS 请求重定向到 VPN 侧 DNS
+            case "$FW_TYPE" in
+                nftables)
+                    nft add table inet mynet_proxy 2>/dev/null || true
+                    nft delete chain inet mynet_proxy dns_intercept 2>/dev/null || true
+                    nft add chain inet mynet_proxy dns_intercept { type nat hook prerouting priority dstnat\; }
+                    nft add rule inet mynet_proxy dns_intercept iifname "br-lan" udp dport 53 dnat to "$dns_server:53"
+                    nft add rule inet mynet_proxy dns_intercept iifname "br-lan" tcp dport 53 dnat to "$dns_server:53"
+                    ;;
+                iptables)
+                    iptables -w 5 -t nat -C PREROUTING -i br-lan -p udp --dport 53 -j DNAT --to-destination "$dns_server:53" 2>/dev/null || \
+                        iptables -w 5 -t nat -A PREROUTING -i br-lan -p udp --dport 53 -j DNAT --to-destination "$dns_server:53"
+                    iptables -w 5 -t nat -C PREROUTING -i br-lan -p tcp --dport 53 -j DNAT --to-destination "$dns_server:53" 2>/dev/null || \
+                        iptables -w 5 -t nat -A PREROUTING -i br-lan -p tcp --dport 53 -j DNAT --to-destination "$dns_server:53"
+                    ;;
+            esac
+            echo "[INFO] ✓ DNS 劫持已启用 (redirect → $dns_server)"
+            ;;
+        resolv)
+            # 修改 resolv.conf
+            local resolv_file="/tmp/resolv.conf.d/resolv.conf.auto"
+            if [ -f "$resolv_file" ]; then
+                cp "$resolv_file" "${resolv_file}.proxy_bak"
+                echo "nameserver $dns_server" > "$resolv_file"
+                echo "[INFO] ✓ DNS 劫持已启用 (resolv → $dns_server)"
+            else
+                echo "[WARN] resolv.conf 不存在: $resolv_file"
+                return 1
+            fi
+            ;;
+        *)
+            echo "[ERROR] 未知 DNS 模式: $dns_mode"
+            return 1
+            ;;
+    esac
+}
+
+stop_dns_intercept() {
+    echo "[INFO] 停止 DNS 劫持..."
+    case "$FW_TYPE" in
+        nftables)
+            nft delete chain inet mynet_proxy dns_intercept 2>/dev/null || true
+            ;;
+        iptables)
+            # 清除所有 dport 53 DNAT 规则（按 interface+protocol 删除）
+            iptables -w 5 -t nat -D PREROUTING -i br-lan -p udp --dport 53 -j DNAT 2>/dev/null || true
+            iptables -w 5 -t nat -D PREROUTING -i br-lan -p tcp --dport 53 -j DNAT 2>/dev/null || true
+            ;;
+    esac
+    # 恢复 resolv.conf
+    local resolv_bak="/tmp/resolv.conf.d/resolv.conf.auto.proxy_bak"
+    if [ -f "$resolv_bak" ]; then
+        mv "$resolv_bak" "/tmp/resolv.conf.d/resolv.conf.auto"
+        echo "[INFO] ✓ resolv.conf 已恢复"
+    fi
+    echo "[INFO] ✓ DNS 劫持已停止"
+}
+
 # 停止代理路由
 stop() {
     echo "[INFO] 停止代理路由..."
 
-    # 停止 peer 公网IP动态监控 (已禁用 - 2025-12-08)
-    # local monitor_script="$SCRIPT_DIR/proxy_ex_monitor.sh"
-    # if [ -f "$monitor_script" ] && [ -x "$monitor_script" ]; then
-    #     echo "[INFO] 停止 peer 公网IP监控..."
-    #     "$monitor_script" stop
-    # fi
+    # 停止 DNS 劫持
+    stop_dns_intercept
+
+    # 停止 Server 模式
+    stop_server_mode
 
     echo "[INFO] 防火墙类型: $FW_TYPE"
 
@@ -1248,16 +1320,32 @@ case "$1" in
     setup)
         setup_proxy
         ;;
+    server_start)
+        start_server_mode
+        ;;
+    server_stop)
+        stop_server_mode
+        ;;
+    dns_start)
+        start_dns_intercept "$2" "$3"
+        ;;
+    dns_stop)
+        stop_dns_intercept
+        ;;
     *)
-        echo "用法: $0 {start|stop|restart|status|refresh|setup}"
+        echo "用法: $0 {start|stop|restart|status|refresh|setup|server_start|server_stop|dns_start|dns_stop}"
         echo ""
         echo "命令说明："
-        echo "  start   - 启动代理路由"
-        echo "  stop    - 停止代理路由"
-        echo "  restart - 重启代理路由"
-        echo "  status  - 查看代理状态"
-        echo "  refresh - 刷新 IP 列表并重新应用配置 (v0.9.9+)"
-        echo "  setup   - 重新配置代理节点 (v0.9.9+)"
+        echo "  start        - 启动代理路由"
+        echo "  stop         - 停止代理路由"
+        echo "  restart      - 重启代理路由"
+        echo "  status       - 查看代理状态"
+        echo "  refresh      - 刷新 IP 列表并重新应用配置 (v0.9.9+)"
+        echo "  setup        - 重新配置代理节点 (v0.9.9+)"
+        echo "  server_start - 启动 Server 模式 (NAT + FORWARD)"
+        echo "  server_stop  - 停止 Server 模式"
+        echo "  dns_start    - 启动 DNS 劫持 (dns_start <mode> <dns_server>)"
+        echo "  dns_stop     - 停止 DNS 劫持"
         exit 1
         ;;
 esac

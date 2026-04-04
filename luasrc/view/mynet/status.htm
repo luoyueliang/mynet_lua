@@ -1,201 +1,131 @@
 <%+header%>
-    <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
 
-    <h2>
-        <%:System Status%>
-    </h2>
+<h2><%:System Status%></h2>
 
-    <% local function fmt_bytes(n)
-        n = tonumber(n) or 0
-        if n >= 1073741824 then return string.format("%.2f GB", n/1073741824) end
-        if n >= 1048576    then return string.format("%.2f MB", n/1048576) end
-        if n >= 1024       then return string.format("%.2f KB", n/1024) end
-        return tostring(n) .. " B"
-    end %>
-    <% local function fmt_uptime(secs)
-        local s = tonumber(secs) or 0
-        local d = math.floor(s / 86400)
-        local h = math.floor((s % 86400) / 3600)
-        local m = math.floor((s % 3600) / 60)
-        if d > 0 then return string.format("%dd %dh %dm", d, h, m) end
-        if h > 0 then return string.format("%dh %dm", h, m) end
-        return string.format("%dm", m)
-    end %>
+<% local function fmt_bytes(n)
+    n = tonumber(n) or 0
+    if n >= 1073741824 then return string.format("%.2f GB", n/1073741824) end
+    if n >= 1048576    then return string.format("%.2f MB", n/1048576) end
+    if n >= 1024       then return string.format("%.2f KB", n/1024) end
+    return tostring(n) .. " B"
+end %>
+<% local function fmt_uptime(secs)
+    local s = tonumber(secs) or 0
+    local d = math.floor(s / 86400)
+    local h = math.floor((s % 86400) / 3600)
+    local m = math.floor((s % 3600) / 60)
+    if d > 0 then return string.format("%dd %dh %dm", d, h, m) end
+    if h > 0 then return string.format("%dh %dm", h, m) end
+    return string.format("%dm", m)
+end %>
 
-        <div class="mn-grid">
+<div>
 
-            <!-- VPN 状态 -->
-            <div class="mn-card">
-                <div class="mn-card-header">
-                    <span class="mn-dot <%=vpn_status=='running' and 'mn-dot-green' or 'mn-dot-red'%>"></span>
-                    <h3>
-                        <%:VPN Service%>
-                    </h3>
-                </div>
-                <div class="mn-card-body">
-                    <table class="mn-kv">
-                        <tr>
-                            <th>
-                                <%:Status%>
-                            </th>
-                            <td><strong>
-                                    <%=pcdata(vpn_status)%>
-                                </strong></td>
-                        </tr>
-                        <tr>
-                            <th>
-                                <%:Type%>
-                            </th>
-                            <td><code><%=pcdata(vpn_type or "")%></code></td>
-                        </tr>
-                        <% if node_id then %>
-                            <tr>
-                                <th>
-                                    <%:Node ID%>
-                                </th>
-                                <td><code><%= type(node_id)=="number" and string.format("%.0f",node_id) or tostring(node_id or "") %></code></td>
-                            </tr>
-                            <% end %>
-                                <% if vpn_iface then %>
-                                    <tr>
-                                        <th>
-                                            <%:Interface%>
-                                        </th>
-                                        <td><code><%=pcdata(vpn_iface.interface)%></code></td>
-                                    </tr>
-                                    <tr>
-                                        <th>
-                                            <%:State%>
-                                        </th>
-                                        <td>
-                                            <%=pcdata(vpn_iface.state)%>
-                                        </td>
-                                    </tr>
-                                    <% if vpn_iface.mtu then %>
-                                        <tr>
-                                            <th>MTU</th>
-                                            <td>
-                                                <%=vpn_iface.mtu%>
-                                            </td>
-                                        </tr>
-                                        <% end %>
-                                            <% end %>
-                    </table>
-                </div>
-                <div class="mn-card-actions">
-                    <button class="mn-btn mn-btn-green" onclick="mnApi('vpn_start',   null, this)">
-                        <%:Start%>
-                    </button>
-                    <button class="mn-btn mn-btn-red" onclick="mnApi('vpn_stop',    null, this)">
-                        <%:Stop%>
-                    </button>
-                    <button class="mn-btn mn-btn-yellow" onclick="mnApi('vpn_restart', null, this)">
-                        <%:Restart%>
-                    </button>
-                </div>
-            </div>
+    <!-- GNB 状态 -->
+    <div class="cbi-section">
+        <h3><span class="mn-dot <%=vpn_status=='running' and 'mn-dot-green' or 'mn-dot-red'%>"></span> <%:GNB Service%></h3>
+        <table class="table" style="width:100%">
+            <tr class="tr">
+                <th class="th" style="width:8em"><%:Status%></th>
+                <td class="td"><strong><%=pcdata(vpn_status)%></strong></td>
+            </tr>
+            <tr class="tr">
+                <th class="th"><%:Type%></th>
+                <td class="td"><code><%=pcdata(vpn_type or "")%></code></td>
+            </tr>
+            <% if node_id then %>
+            <tr class="tr">
+                <th class="th"><%:Node ID%></th>
+                <td class="td"><code><%= type(node_id)=="number" and string.format("%.0f",node_id) or tostring(node_id or "") %></code></td>
+            </tr>
+            <% end %>
+            <% if vpn_iface then %>
+            <tr class="tr">
+                <th class="th"><%:Interface%></th>
+                <td class="td"><code><%=pcdata(vpn_iface.interface)%></code></td>
+            </tr>
+            <tr class="tr">
+                <th class="th"><%:State%></th>
+                <td class="td"><%=pcdata(vpn_iface.state)%></td>
+            </tr>
+            <% if vpn_iface.mtu then %>
+            <tr class="tr">
+                <th class="th">MTU</th>
+                <td class="td"><%=vpn_iface.mtu%></td>
+            </tr>
+            <% end %>
+            <% end %>
+        </table>
+    </div>
 
-            <!-- 流量统计 -->
-            <div class="mn-card">
-                <div class="mn-card-header">
-                    <h3>
-                        <%:Traffic%>
-                    </h3>
-                </div>
-                <div class="mn-card-body">
-                    <table class="mn-kv">
-                        <tr>
-                            <th>RX</th>
-                            <td>
-                                <%=fmt_bytes(rx_bytes)%>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th>TX</th>
-                            <td>
-                                <%=fmt_bytes(tx_bytes)%>
-                            </td>
-                        </tr>
-                    </table>
-                </div>
-            </div>
+    <!-- 流量统计 -->
+    <div class="cbi-section">
+        <h3><%:Traffic%></h3>
+        <table class="table" style="width:100%">
+            <tr class="tr">
+                <th class="th" style="width:8em">RX</th>
+                <td class="td"><%=fmt_bytes(rx_bytes)%></td>
+            </tr>
+            <tr class="tr">
+                <th class="th">TX</th>
+                <td class="td"><%=fmt_bytes(tx_bytes)%></td>
+            </tr>
+        </table>
+    </div>
 
-            <!-- 系统信息 -->
-            <div class="mn-card">
-                <div class="mn-card-header">
-                    <h3>
-                        <%:System%>
-                    </h3>
-                </div>
-                <div class="mn-card-body">
-                    <table class="mn-kv">
-                        <% if uptime and uptime ~="" then %>
-                            <tr>
-                                <th>
-                                    <%:Uptime%>
-                                </th>
-                                <td>
-                                    <%=fmt_uptime(uptime)%>
-                                </td>
-                            </tr>
-                            <% end %>
-                                <% if loadavg and loadavg ~="" then %>
-                                    <tr>
-                                        <th>
-                                            <%:Load Average%>
-                                        </th>
-                                        <td>
-                                            <%=pcdata(loadavg)%>
-                                        </td>
-                                    </tr>
-                                    <% end %>
-                    </table>
-                </div>
-            </div>
+    <!-- 系统信息 -->
+    <div class="cbi-section">
+        <h3><%:System%></h3>
+        <table class="table" style="width:100%">
+            <% if uptime and uptime ~="" then %>
+            <tr class="tr">
+                <th class="th" style="width:8em"><%:Uptime%></th>
+                <td class="td"><%=fmt_uptime(uptime)%></td>
+            </tr>
+            <% end %>
+            <% if loadavg and loadavg ~="" then %>
+            <tr class="tr">
+                <th class="th"><%:Load Average%></th>
+                <td class="td"><%=pcdata(loadavg)%></td>
+            </tr>
+            <% end %>
+        </table>
+    </div>
 
-            <!-- 当前区域 -->
-            <div class="mn-card">
-                <div class="mn-card-header">
-                    <h3>
-                        <%:Zone%>
-                    </h3>
-                </div>
-                <div class="mn-card-body">
-                    <% if zone and zone.zone_id and tostring(zone.zone_id) ~= "0" then %>
-                        <table class="mn-kv">
-                            <tr>
-                                <th>
-                                    <%:Name%>
-                                </th>
-                                <td><strong>
-                                        <%=pcdata(zone.zone_name)%>
-                                    </strong></td>
-                            </tr>
-                            <tr>
-                                <th>ID</th>
-                                <td><code><%= type(zone.zone_id)=="number" and string.format("%.0f",zone.zone_id) or tostring(zone.zone_id) %></code></td>
-                            </tr>
-                        </table>
-                        <% else %>
-                            <p class="mn-hint mn-muted">
-                                <%:No zone selected%>
-                            </p>
-                            <% end %>
-                </div>
-            </div>
+    <!-- 当前区域 -->
+    <% if not is_guest then %>
+    <div class="cbi-section">
+        <h3><%:Group%></h3>
+        <% if zone and zone.zone_id and tostring(zone.zone_id) ~= "0" then %>
+        <table class="table" style="width:100%">
+            <tr class="tr">
+                <th class="th" style="width:8em"><%:Name%></th>
+                <td class="td"><strong><%=pcdata(zone.zone_name)%></strong></td>
+            </tr>
+            <tr class="tr">
+                <th class="th">ID</th>
+                <td class="td"><code><%= type(zone.zone_id)=="number" and string.format("%.0f",zone.zone_id) or tostring(zone.zone_id) %></code></td>
+            </tr>
+        </table>
+        <% else %>
+        <p class="mn-muted" style="padding:0 1rem"><%:No group selected%></p>
+        <% end %>
+    </div>
+    <% end %>
 
-        </div><!-- .mn-grid -->
+</div>
 
-        <div class="mn-actions-bar">
-            <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>">
-                ← <%:Dashboard%>
-            </a>
-            <button class="mn-btn" onclick="location.reload()">
-                <%:Refresh%>
-            </button>
-        </div>
+<div class="cbi-page-actions">
+    <a class="cbi-button" href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>">
+        ← <%:Dashboard%>
+    </a>
+    <button class="cbi-button cbi-button-action" onclick="location.reload()">
+        <%:Refresh%>
+    </button>
+</div>
 
-        <div id="mn-toast" class="mn-toast mn-hidden"></div>
+<div id="mn-toast" class="mn-toast mn-hidden"></div>
 
-        <script src="<%=resource%>/mynet/js/mynet.js"></script>
-        <%+footer%>
+<script src="<%=resource%>/mynet/js/mynet.js"></script>
+<%+footer%>

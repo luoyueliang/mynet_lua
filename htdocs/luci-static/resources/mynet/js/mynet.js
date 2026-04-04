@@ -1,7 +1,9 @@
 /**
  * mynet.js — MyNet LuCI 前端脚本
- * 处理 VPN 控制按钮、状态轮询、Toast 通知等交互。
+ * 处理 GNB 控制按钮、状态轮询、Toast 通知等交互。
  */
+
+/* ─── 暗色模式：主检测在各页面 <head> 内联脚本（检测 Argon <style> 中 #1e1e1e） ─── */
 
 /* ─── 基础 Fetch 封装 ─────────────────────────────────────── */
 
@@ -64,21 +66,43 @@ function mnShowToast(msg, type) {
     }, 3500);
 }
 
-/* ─── VPN 控制 ───────────────────────────────────────────── */
+/* ─── GNB 控制 ───────────────────────────────────────────── */
 
 /**
- * mnApi — 通用 VPN 操作（start / stop / restart）
+ * _mnApiInflight — 请求去重：同一 action 进行中则拒绝重复调用
+ * _mnApiLastCall — 防抖：同一 action 两次调用间隔 < 1s 则忽略
+ */
+var _mnApiInflight = {};
+var _mnApiLastCall = {};
+var _MN_API_DEBOUNCE_MS = 1000;
+
+/**
+ * mnApi — 通用 GNB 操作（start / stop / restart）
+ * 内置防抖 + 去重：同一 action 在请求中或距上次调用 <1s 时忽略
  * @param {string} action  - 'vpn_start' | 'vpn_stop' | 'vpn_restart'
  * @param {object} params  - 附加参数（可 null）
  * @param {HTMLElement} btn - 触发按钮（用于禁用/恢复）
  */
 function mnApi(action, params, btn) {
+    var now = Date.now();
+    /* 去重：同一 action 请求尚未返回 */
+    if (_mnApiInflight[action]) {
+        mnShowToast('请求进行中，请稍候…');
+        return;
+    }
+    /* 防抖：距上次调用 < 1s */
+    if (_mnApiLastCall[action] && now - _mnApiLastCall[action] < _MN_API_DEBOUNCE_MS) {
+        return;
+    }
+    _mnApiInflight[action] = true;
+    _mnApiLastCall[action] = now;
     if (btn) btn.disabled = true;
 
     var url = _mnApiBase() + action;
 
     mnFetch(url, 'POST', params || {},
         function (data) {
+            _mnApiInflight[action] = false;
             if (btn) btn.disabled = false;
             if (data.success) {
                 mnShowToast(data.message || 'OK');
@@ -88,6 +112,7 @@ function mnApi(action, params, btn) {
             }
         },
         function (err) {
+            _mnApiInflight[action] = false;
             if (btn) btn.disabled = false;
             mnShowToast(err, 'error');
         }
@@ -97,7 +122,7 @@ function mnApi(action, params, btn) {
 /* ─── 状态轮询 ───────────────────────────────────────────── */
 
 /**
- * mnRefreshStatus — 拉取 VPN 服务状态并更新控制台指示点
+ * mnRefreshStatus — 拉取 GNB 服务状态并更新控制台指示点
  */
 function mnRefreshStatus() {
     mnFetch(_mnApiBase() + 'status', 'GET', null,
@@ -110,14 +135,7 @@ function mnRefreshStatus() {
 }
 
 function _updateStatusDots(running) {
-    var dots = document.querySelectorAll('.mn-dot');
-    dots.forEach(function (dot) {
-        if (dot.closest('.mn-card-header')) {
-            dot.className = 'mn-dot ' + (running ? 'mn-dot-green' : 'mn-dot-red');
-        }
-    });
-
-    // node 页专用状态点 + 标签
+    // Dashboard + node 页状态点
     var nodeDot = document.getElementById('mn-vpn-dot');
     if (nodeDot) nodeDot.className = 'mn-dot ' + (running ? 'mn-dot-green' : 'mn-dot-red');
 
@@ -497,7 +515,7 @@ function mnNodeGenKey() {
     var confirmed = window.confirm(
         '⚠ Warning: Generating a new key pair will replace the current private key.\n\n' +
         'After generation, ALL peer nodes will need to re-fetch and update their public key files ' +
-        'before the VPN can reconnect.\n\n' +
+        'before the GNB network can reconnect.\n\n' +
         'Continue?'
     );
     if (!confirmed) return;
@@ -552,4 +570,190 @@ function mnInstallSystemDeps(btn) {
             if (statusEl) { statusEl.textContent = '✗ ' + err; statusEl.className = 'mn-small mn-dep-fail'; }
         }
     );
+}
+
+/* ─── Dashboard 统计轮询 ─────────────────────────────────── */
+
+/**
+ * mnRefreshDashboardStats — 拉取 dashboard_stats 并更新 UI 元素
+ * 元素 id 命名约定: mn-stat-{key}
+ */
+function mnRefreshDashboardStats() {
+    mnFetch(_mnApiBase() + 'dashboard_stats', 'POST', {},
+        function (data) {
+            if (!data.success) return;
+            var m = data.metrics || {};
+            var ids = {
+                'mn-stat-cpu':    (m.cpu_percent || 0) + '%',
+                'mn-stat-mem':    m.memory_total ? Math.round(m.memory_used / m.memory_total * 100) + '%' : '--',
+                'mn-stat-vpn':    m.vpn_status || '--',
+                'mn-stat-peers':  String(data.peers || 0),
+                'mn-stat-rx':     _mnFmtBytes(m.rx_bytes || 0),
+                'mn-stat-tx':     _mnFmtBytes(m.tx_bytes || 0),
+                'mn-stat-uptime': _mnFmtUptime(m.uptime || 0),
+                'mn-stat-svc':    (data.svc_state && data.svc_state.state) || '--',
+            };
+            for (var k in ids) {
+                var el = document.getElementById(k);
+                if (el) el.textContent = ids[k];
+            }
+        },
+        function () { /* 静默失败 */ }
+    );
+}
+
+function _mnFmtBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+    return (b / 1073741824).toFixed(2) + ' GB';
+}
+
+function _mnFmtUptime(sec) {
+    var d = Math.floor(sec / 86400);
+    var h = Math.floor((sec % 86400) / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
+}
+
+/* ─── Pre-flight 校验展示 ────────────────────────────────── */
+
+/**
+ * mnRunPreflight — 执行 pre-flight 校验并在指定容器展示结果
+ * @param {string|number} nodeId
+ * @param {HTMLElement} container - 结果容器
+ */
+function mnRunPreflight(nodeId, container) {
+    if (!container) return;
+    container.innerHTML = '<span class="mn-small">Checking…</span>';
+    mnFetch(_mnApiBase() + 'preflight', 'POST', { node_id: nodeId },
+        function (data) {
+            if (!data.success || !data.data) {
+                container.innerHTML = '<span class="mn-dep-fail">Check failed</span>';
+                return;
+            }
+            var checks = data.data.checks || [];
+            var html = '<table class="table table-condensed"><thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead><tbody>';
+            for (var i = 0; i < checks.length; i++) {
+                var c = checks[i];
+                var cls = c.ok ? 'mn-dep-ok' : 'mn-dep-fail';
+                html += '<tr><td>' + c.name + '</td><td class="' + cls + '">' + (c.ok ? '✓' : '✗') + '</td><td class="mn-small">' + (c.detail || '') + '</td></tr>';
+            }
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        },
+        function (err) {
+            container.innerHTML = '<span class="mn-dep-fail">Error: ' + err + '</span>';
+        }
+    );
+}
+
+/* ─── 日志尾部查看 ───────────────────────────────────────── */
+
+function mnRefreshLogs(container, lines) {
+    if (!container) return;
+    mnFetch(_mnApiBase() + 'logs_tail', 'POST', { lines: lines || 100 },
+        function (data) {
+            if (data.success && data.log) {
+                container.textContent = data.log;
+                container.scrollTop = container.scrollHeight;
+            }
+        },
+        function () { /* 静默 */ }
+    );
+}
+
+/* ─── Tab 切换 ────────────────────────────────────────────── */
+
+/**
+ * mnSwitchTab — 通用 tab 切换
+ * @param {string} tabName   - 例如 'keys' | 'peers'
+ * @param {HTMLElement} btn  - 按钮
+ */
+function mnSwitchTab(tabName, btn) {
+    // 找到按钮所在的 section 容器，限制 tab 切换范围
+    var scope = btn ? btn.closest('.mn-section') : null;
+    var panels = (scope || document).querySelectorAll('.mn-tab-panel');
+    panels.forEach(function (p) { p.style.display = 'none'; });
+
+    // 取消所有 tab 按钮激活
+    var btns = (scope || document).querySelectorAll('.mn-tab-btn');
+    btns.forEach(function (b) { b.classList.remove('mn-tab-active'); });
+
+    // 显示目标 panel（用 style.display 覆盖 CSS .mn-tab-panel { display:none }）
+    var target = document.getElementById('mn-tab-' + tabName);
+    if (target) target.style.display = 'block';
+
+    // 激活当前按钮
+    if (btn) btn.classList.add('mn-tab-active');
+}
+
+/* ─── 诊断 ────────────────────────────────────────────────── */
+
+/**
+ * mnRunDiagnose — 运行系统诊断
+ */
+function mnRunDiagnose() {
+    var btn = document.getElementById('mn-diag-btn');
+    if (btn) btn.disabled = true;
+
+    var resultDiv = document.getElementById('mn-diag-result');
+    var logSection = document.getElementById('mn-diag-log-section');
+    var tbody = document.querySelector('#mn-diag-table tbody');
+    var logPre = document.getElementById('mn-diag-log');
+
+    if (tbody) tbody.innerHTML = '<tr><td colspan="3">Checking…</td></tr>';
+    if (resultDiv) resultDiv.classList.remove('mn-hidden');
+    if (logSection) logSection.classList.add('mn-hidden');
+
+    mnFetch(_mnApiBase() + 'diagnose', 'POST', {},
+        function (data) {
+            if (btn) btn.disabled = false;
+            if (!data.success || !data.data) {
+                if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="mn-dep-fail">' +
+                    (data.message || 'Diagnostics failed') + '</td></tr>';
+                return;
+            }
+            var d = data.data;
+            var checks = d.checks || [];
+            var html = '';
+            for (var i = 0; i < checks.length; i++) {
+                var c = checks[i];
+                var cls = c.ok ? 'mn-dep-ok' : 'mn-dep-fail';
+                var icon = c.ok ? '✓' : '✗';
+                html += '<tr><td>' + _esc(c.name) + '</td>'
+                    + '<td class="' + cls + '">' + icon + '</td>'
+                    + '<td class="mn-small">' + _esc(c.detail || '') + '</td></tr>';
+            }
+            if (tbody) tbody.innerHTML = html;
+
+            // GNB 日志
+            if (d.gnb_log && logPre) {
+                logPre.textContent = d.gnb_log;
+                if (logSection) logSection.classList.remove('mn-hidden');
+            }
+        },
+        function (err) {
+            if (btn) btn.disabled = false;
+            if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="mn-dep-fail">Error: ' +
+                _esc(err) + '</td></tr>';
+        }
+    );
+}
+
+/** 简单 HTML 转义 */
+function _esc(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/* ─── 节点页：刷新全部配置 ───────────────────────────────── */
+
+function mnNodeRefreshAll() {
+    var types = ['address', 'route', 'node'];
+    for (var i = 0; i < types.length; i++) {
+        mnNodeRefreshConfig(types[i]);
+    }
 }

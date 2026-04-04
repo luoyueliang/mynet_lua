@@ -17,15 +17,8 @@ local function cmd_exists(name)
     return c == 0
 end
 
--- ─────────────────────────────────────────────────────────────
--- 平台检测
--- ─────────────────────────────────────────────────────────────
-
-function M.is_openwrt()
-    local _, c = util.exec_status("test -f /etc/openwrt_release 2>/dev/null")
-    if c == 0 then return true end
-    return cmd_exists("uci")
-end
+-- 本项目仅服务 OpenWrt
+function M.is_openwrt() return true end
 
 -- ─────────────────────────────────────────────────────────────
 -- mynetd 运行状态  →  (status_str, pid_str)
@@ -88,7 +81,7 @@ local function check_gnb_process(node_id)
         local _, code = util.exec_status("kill -0 " .. pid_str .. " 2>/dev/null")
         if code == 0 then return true, nil, pid_str end
     end
-    local out, code = util.exec_status("pgrep -x gnb 2>/dev/null")
+    local out, code = util.exec_status("pgrep gnb 2>/dev/null")
     if code == 0 and util.trim(out or "") ~= "" then
         return true, nil, util.trim(out):match("^(%d+)")
     end
@@ -208,26 +201,131 @@ function M.collect_firewall_info()
 end
 
 -- ─────────────────────────────────────────────────────────────
+-- 防火墙自动管理
+-- ─────────────────────────────────────────────────────────────
+
+-- 查找 firewall.mynet 脚本路径
+local function find_fw_script()
+    local paths = {
+        util.MYNET_HOME .. "/scripts/firewall.mynet",
+        util.MYNET_HOME .. "/scripts/_src/openwrt/runtime/firewall.mynet",
+        "/usr/share/mynet/firewall.mynet",
+    }
+    for _, p in ipairs(paths) do
+        if util.file_exists(p) then return p end
+    end
+    return nil
+end
+
+--- 确保防火墙 zone/forwarding/include 已创建（幂等）
+-- @return ok:boolean, msg:string
+function M.ensure_firewall_zone()
+    -- 已存在则跳过
+    local zi = find_mynet_zone_index()
+    if zi then return true, "zone already exists" end
+
+    -- 检查 network.mynet 是否存在
+    local net_check = uci_get("network.mynet")
+    if net_check == "" then
+        -- 尝试创建最小 network.mynet 接口
+        local dev_name = "gnb_tun"
+        util.exec("uci set network.mynet=interface 2>/dev/null")
+        util.exec("uci set network.mynet.proto='none' 2>/dev/null")
+        util.exec("uci set network.mynet.device='" .. dev_name .. "' 2>/dev/null")
+        util.exec("uci commit network 2>/dev/null")
+    end
+
+    local fw_script = find_fw_script()
+    if not fw_script then
+        return false, "firewall.mynet script not found"
+    end
+
+    local env = "MYNET_HOME=" .. util.MYNET_HOME
+    local out, code = util.exec_status(
+        env .. " sh " .. fw_script .. " install --interface gnb_tun 2>&1")
+    out = util.trim(out or "")
+    if code == 0 then
+        return true, out ~= "" and out or "firewall zone created"
+    else
+        return false, out ~= "" and out or "firewall install failed (code " .. tostring(code) .. ")"
+    end
+end
+
+--- 删除防火墙 zone/forwarding/include（幂等）
+-- @return ok:boolean, msg:string
+function M.remove_firewall_zone()
+    local zi = find_mynet_zone_index()
+    if not zi then return true, "zone already removed" end
+
+    local fw_script = find_fw_script()
+    if fw_script then
+        local env = "MYNET_HOME=" .. util.MYNET_HOME
+        util.exec_status(env .. " sh " .. fw_script .. " uninstall --interface gnb_tun 2>&1")
+    end
+
+    -- 验证 shell 脚本是否成功：若 zone 仍存在则用 UCI 直接清理
+    zi = find_mynet_zone_index()
+    if not zi then return true, "firewall zone removed" end
+
+    -- Fallback: 直接 UCI 删除（修复 shell 脚本对单值 network 字段的兼容问题）
+    -- 1. 删除 forwarding 规则（倒序避免索引偏移）
+    for i = 30, 0, -1 do
+        local src  = uci_get(string.format("firewall.@forwarding[%d].src",  i))
+        local dest = uci_get(string.format("firewall.@forwarding[%d].dest", i))
+        if src == "mynet" or dest == "mynet" then
+            util.exec(string.format("uci delete firewall.@forwarding[%d] 2>/dev/null", i))
+        end
+    end
+    -- 2. 删除 zone
+    zi = find_mynet_zone_index()
+    if zi then
+        util.exec(string.format("uci delete firewall.@zone[%d] 2>/dev/null", zi))
+    end
+    -- 3. 删除 include
+    util.exec("uci delete firewall.mynet_include 2>/dev/null")
+    -- 4. 提交并重载
+    util.exec("uci commit firewall 2>/dev/null")
+    util.exec("/etc/init.d/firewall reload 2>/dev/null")
+
+    -- 最终验证
+    zi = find_mynet_zone_index()
+    if not zi then
+        return true, "firewall zone removed (UCI fallback)"
+    end
+    return false, "failed to remove zone"
+end
+
+--- 重新应用 masq 规则（幂等，需 VPN 接口已启动）
+-- @return ok:boolean, msg:string
+function M.apply_firewall_masq()
+    local fw_script = find_fw_script()
+    if not fw_script then
+        return false, "firewall.mynet script not found"
+    end
+
+    local env = "MYNET_HOME=" .. util.MYNET_HOME
+    local out, code = util.exec_status(
+        env .. " sh " .. fw_script .. " start --interface gnb_tun 2>&1")
+    out = util.trim(out or "")
+    if code == 0 then
+        return true, out ~= "" and out or "masq rules applied"
+    else
+        return false, out ~= "" and out or "masq apply failed (code " .. tostring(code) .. ")"
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────
 -- 路由器核心信息收集
 -- ─────────────────────────────────────────────────────────────
 
 function M.collect_router_info(node_id)
-    local openwrt = M.is_openwrt()
-    local info = { openwrt = openwrt }
+    local info = { openwrt = true }
 
     -- ── 路由模式 ──
-    local wan_iface = ""
-    if openwrt then
-        wan_iface = uci_get("network.wan.device")
-        if wan_iface == "" then wan_iface = uci_get("network.wan.ifname") end
-    end
+    local wan_iface = uci_get("network.wan.device")
+    if wan_iface == "" then wan_iface = uci_get("network.wan.ifname") end
     info.wan_iface = wan_iface ~= "" and wan_iface or nil
-
-    if openwrt then
-        info.routing_mode = (wan_iface ~= "") and "主路由 (Gateway)" or "旁路由 (Bypass)"
-    else
-        info.routing_mode = "Linux"
-    end
+    info.routing_mode = (wan_iface ~= "") and "主路由 (Gateway)" or "旁路由 (Bypass)"
 
     -- ── WAN IP ──
     if info.wan_iface then
@@ -238,12 +336,10 @@ function M.collect_router_info(node_id)
     if info.wan_ip == "" then info.wan_ip = nil end
 
     -- ── LAN ──
-    if openwrt then
-        info.lan_ip = uci_get("network.lan.ipaddr")
-        if info.lan_ip == "" then
-            info.lan_ip = util.trim(util.exec(
-                "ip addr show br-lan 2>/dev/null | awk '/inet /{print $2}' | head -1") or "")
-        end
+    info.lan_ip = uci_get("network.lan.ipaddr")
+    if info.lan_ip == "" then
+        info.lan_ip = util.trim(util.exec(
+            "ip addr show br-lan 2>/dev/null | awk '/inet /{print $2}' | head -1") or "")
     end
     if info.lan_ip == "" then info.lan_ip = nil end
 
@@ -254,11 +350,9 @@ function M.collect_router_info(node_id)
     if info.gateway == "" then info.gateway = nil end
 
     -- ── VPN 接口 ──
-    if openwrt then
-        info.vpn_iface = uci_get("network.mynet.device")
-        if info.vpn_iface == "" then info.vpn_iface = uci_get("network.mynet.ifname") end
-    end
-    if not info.vpn_iface or info.vpn_iface == "" then
+    info.vpn_iface = uci_get("network.mynet.device")
+    if info.vpn_iface == "" then info.vpn_iface = uci_get("network.mynet.ifname") end
+    if info.vpn_iface == "" then
         info.vpn_iface = util.trim(util.exec(
             "ip addr 2>/dev/null | awk '/^[0-9]+:.*gnb_tun/{gsub(\":\",\"\",$2); print $2}' | head -1") or "")
     end
@@ -289,9 +383,7 @@ function M.collect_router_info(node_id)
     info.vpn_routes   = vpn_routes
 
     -- ── 防火墙 ──
-    if openwrt then
-        info.firewall = M.collect_firewall_info()
-    end
+    info.firewall = M.collect_firewall_info()
 
     -- ── 依赖检查 ──
     info.deps, info.deps_all_ok, info.deps_critical_ok = M.check_deps(node_id)
@@ -372,6 +464,196 @@ function M.parse_gnb_nodes(output)
     end
     if cur then table.insert(nodes, cur) end
     return nodes
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Heartbeat 指标采集（对齐 client heartbeat metrics）
+-- 返回: { cpu_percent, memory_used, memory_total, disk_used,
+--         disk_total, uptime, vpn_status, peer_count,
+--         rx_bytes, tx_bytes, load_avg }
+-- ─────────────────────────────────────────────────────────────
+function M.collect_metrics(node_id)
+    local m = {}
+
+    -- CPU — 从 /proc/stat 取瞬时 idle 占比（近似值）
+    local stat = util.read_file("/proc/stat")
+    if stat then
+        local user, nice, system, idle = stat:match("^cpu%s+(%d+)%s+(%d+)%s+(%d+)%s+(%d+)")
+        if user then
+            local total = (tonumber(user) or 0) + (tonumber(nice) or 0)
+                        + (tonumber(system) or 0) + (tonumber(idle) or 0)
+            if total > 0 then
+                m.cpu_percent = math.floor(((total - (tonumber(idle) or 0)) / total) * 100 + 0.5)
+            end
+        end
+    end
+    m.cpu_percent = m.cpu_percent or 0
+
+    -- Memory — /proc/meminfo
+    local meminfo = util.read_file("/proc/meminfo") or ""
+    local mem_total = tonumber(meminfo:match("MemTotal:%s*(%d+)"))    or 0
+    local mem_free  = tonumber(meminfo:match("MemFree:%s*(%d+)"))     or 0
+    local mem_buf   = tonumber(meminfo:match("Buffers:%s*(%d+)"))     or 0
+    local mem_cache = tonumber(meminfo:match("Cached:%s*(%d+)"))      or 0
+    m.memory_total = mem_total * 1024   -- kB → bytes
+    m.memory_used  = (mem_total - mem_free - mem_buf - mem_cache) * 1024
+
+    -- Disk — df /
+    local df_out = util.trim(util.exec("df / 2>/dev/null | tail -1") or "")
+    local _, dsize, dused = df_out:match("(%S+)%s+(%d+)%s+(%d+)")
+    m.disk_total = (tonumber(dsize) or 0) * 1024   -- 1K blocks → bytes
+    m.disk_used  = (tonumber(dused) or 0) * 1024
+
+    -- Uptime
+    local uptime_raw = util.trim(util.read_file("/proc/uptime") or "")
+    m.uptime = math.floor(tonumber(uptime_raw:match("^([%d%.]+)")) or 0)
+
+    -- Load average
+    m.load_avg = util.trim(util.exec("cat /proc/loadavg 2>/dev/null") or "")
+
+    -- VPN status
+    local node_m = require("luci.model.mynet.node")
+    local cfg_m  = require("luci.model.mynet.config")
+    local nid = node_id or cfg_m.get_node_id()
+    if nid and nid ~= 0 and node_m.gnb_is_running(nid) then
+        m.vpn_status = "running"
+    else
+        m.vpn_status = node_m.get_vpn_service_status()
+    end
+
+    -- Peer count — gnb_ctl 输出中的节点数
+    local iface = cfg_m.get_vpn_interface()
+    local peer_count = 0
+    if nid and util.int_str(nid) ~= "0" then
+        local gnb_ctl = util.GNB_DRIVER_ROOT .. "/bin/gnb_ctl"
+        local gnb_map = util.GNB_CONF_DIR .. "/" .. util.int_str(nid) .. "/gnb.map"
+        if util.file_exists(gnb_ctl) and util.file_exists(gnb_map) then
+            local out = util.exec("cd '" .. util.GNB_DRIVER_ROOT
+                .. "' && ./bin/gnb_ctl -s -b 'conf/" .. util.int_str(nid)
+                .. "/gnb.map' 2>/dev/null | grep -c '^node '") or "0"
+            peer_count = tonumber(util.trim(out)) or 0
+        end
+    end
+    m.peer_count = peer_count
+
+    -- Network I/O
+    local rx = util.trim(util.exec("cat /sys/class/net/" .. iface .. "/statistics/rx_bytes 2>/dev/null") or "0")
+    local tx = util.trim(util.exec("cat /sys/class/net/" .. iface .. "/statistics/tx_bytes 2>/dev/null") or "0")
+    m.rx_bytes = tonumber(rx) or 0
+    m.tx_bytes = tonumber(tx) or 0
+
+    return m
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- 提交 heartbeat 到服务端（PATCH /nodes/{id}/heartbeat）
+-- 对齐 client heartbeat 插件的上报格式
+-- 返回: (true, nil) 或 (nil, error_string)
+-- ─────────────────────────────────────────────────────────────
+function M.submit_heartbeat(node_id)
+    local auth_m = require("luci.model.mynet.auth")
+    local cfg_m  = require("luci.model.mynet.config")
+    local api_m  = require("luci.model.mynet.api")
+    local node_m = require("luci.model.mynet.node")
+
+    local current, err = auth_m.ensure_valid()
+    if err then return nil, "auth: " .. err end
+
+    local zone = cfg_m.load_current_zone()
+    local zone_id = zone and zone.zone_id or "0"
+    local nid_str = util.int_str(node_id)
+
+    local metrics = M.collect_metrics(node_id)
+    local timestamp = util.format_time(util.time_now())
+    local metrics_json = util.json_encode(metrics) or "{}"
+
+    -- HMAC 签名（使用私钥 hex 作为 HMAC key）
+    local priv_path = string.format("%s/%s/security/%s.private",
+        util.GNB_CONF_DIR, nid_str, nid_str)
+    local priv_hex = util.trim(util.read_file(priv_path) or "")
+    local signature = ""
+    if priv_hex ~= "" then
+        signature = util.sign_heartbeat(nid_str, timestamp, metrics_json, priv_hex) or ""
+    end
+
+    local payload = {
+        node_id   = nid_str,
+        timestamp = timestamp,
+        metrics   = metrics,
+        signature = signature,
+    }
+
+    local endpoint = string.format("/nodes/%s/heartbeat", nid_str)
+    local data, api_err = api_m.patch_json(
+        cfg_m.get_api_url(), endpoint, payload, current.token, zone_id)
+    if api_err then return nil, api_err end
+    if data and data.success == false then
+        return nil, data.message or "heartbeat rejected"
+    end
+    return true, nil
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- 健康检查聚合（Dashboard 用）
+-- 返回 issues 数组: { level, title, detail, action_label, action_api }
+-- level: "error" | "warn" | "ok"
+-- ─────────────────────────────────────────────────────────────
+function M.run_health_check(node_id, vpn_status, fw_info, deps)
+    local issues = {}
+
+    -- 1. 关键依赖缺失
+    if deps then
+        for _, d in ipairs(deps) do
+            if not d.ok and d.name ~= "gnb process" then
+                table.insert(issues, {
+                    level  = "error",
+                    title  = d.name .. " missing",
+                    detail = d.hint or "",
+                })
+            end
+        end
+    end
+
+    -- 2. 防火墙区域未配置
+    if not fw_info or not fw_info.mynet_zone_exists then
+        table.insert(issues, {
+            level        = "error",
+            title        = "Firewall zone not configured",
+            detail       = "VPN traffic will not be forwarded",
+            action_label = "Setup Firewall",
+            action_api   = "fw_setup",
+        })
+    elseif not fw_info.mynet_masq then
+        table.insert(issues, {
+            level        = "warn",
+            title        = "Masquerade disabled",
+            detail       = "NAT may not work for VPN traffic",
+            action_label = "Apply Masq",
+            action_api   = "fw_apply_masq",
+        })
+    end
+
+    -- 3. VPN 未运行
+    if vpn_status ~= "running" then
+        table.insert(issues, {
+            level        = "warn",
+            title        = "GNB service stopped",
+            detail       = "VPN tunnel is not active",
+            action_label = "Start GNB",
+            action_api   = "vpn_start",
+        })
+    end
+
+    -- 4. 节点未配置
+    if not node_id or tostring(node_id) == "0" or tostring(node_id) == "" then
+        table.insert(issues, {
+            level  = "error",
+            title  = "Node not configured",
+            detail = "Go to Setup Wizard or GNB Standalone to configure this device",
+        })
+    end
+
+    return issues
 end
 
 return M

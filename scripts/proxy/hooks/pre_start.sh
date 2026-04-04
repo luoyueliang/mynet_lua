@@ -18,6 +18,13 @@
 
 set -e
 
+# 日志捕获
+if [ -n "$MYNET_HOME" ]; then
+    mkdir -p "$MYNET_HOME/logs" 2>/dev/null || true
+    exec >> "$MYNET_HOME/logs/hooks.log" 2>&1
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] pre_start.sh"
+fi
+
 # 检查 MYNET_HOME 必须设置
 if [ -z "$MYNET_HOME" ]; then
     echo "错误: MYNET_HOME 环境变量未设置"

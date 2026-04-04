@@ -112,8 +112,8 @@ ensure_jq() {
     # 如果已经有 jq，直接返回
     have_cmd jq && return 0
 
-    # 只在 Linux 系统（包括 OpenWrt）上自动安装
-    [[ "$os" != "linux" && "$os" != "openwrt" ]] && return 1
+    # 只在 OpenWrt 上自动安装
+    [[ "$os" != "openwrt" ]] && return 1
 
     log "正在自动安装 jq 工具..."
 
@@ -223,12 +223,11 @@ detect_openwrt_arch() {
     return 1
 }
 
-# 检测 FPU 类型
+# 检测 FPU 类型（OpenWrt/Linux）
 detect_fpu() {
     local uname_m="$1"
 
-    # 非 Linux 系统默认 hard-float
-    [[ ! -f /proc/cpuinfo ]] && echo "hard" && return
+    [[ ! -f /proc/cpuinfo ]] && echo "none" && return
 
     case "$uname_m" in
         arm64|aarch64)
@@ -299,24 +298,14 @@ find_arch_from_list() {
     return 1
 }
 
-# 系统检测
+# 系统检测（OpenWrt 专用）
 detect_system() {
-    local os arch
+    local os="openwrt" arch
 
-    # 检测操作系统
-    if [[ -f /etc/openwrt_release ]] || [[ -x /bin/opkg ]] || [[ -x /usr/bin/opkg ]]; then
-        os="openwrt"
-    else
-        case "$(uname -s)" in
-            Linux)   os="linux" ;;
-            Darwin)  os="darwin" ;;
-            FreeBSD) os="freebsd" ;;
-            MINGW*|MSYS*|CYGWIN*) os="windows" ;;
-            *)
-                error "不支持的操作系统: $(uname -s)"
-                exit 1
-                ;;
-        esac
+    # 验证 OpenWrt 环境
+    if [[ ! -f /etc/openwrt_release ]] && [[ ! -x /bin/opkg ]] && [[ ! -x /usr/bin/opkg ]]; then
+        error "此安装脚本仅支持 OpenWrt"
+        exit 1
     fi
 
     # 获取 uname -m 结果
@@ -324,17 +313,14 @@ detect_system() {
     uname_m="$(uname -m)"
 
     # OpenWrt 特殊处理: 优先使用 /etc/openwrt_release 的架构信息
-    # 因为某些 OpenWrt 设备的 uname -m 不准确 (如 MT7621 返回 mips 实际是 mipsel)
-    if [[ "$os" == "openwrt" ]]; then
-        local openwrt_arch
-        openwrt_arch=$(detect_openwrt_arch || echo "")
+    local openwrt_arch
+    openwrt_arch=$(detect_openwrt_arch || echo "")
 
-        if [[ -n "$openwrt_arch" ]]; then
-            debug "OpenWrt 架构覆盖: $uname_m -> $openwrt_arch (从 /etc/openwrt_release)"
-            uname_m="$openwrt_arch"
-        else
-            warn "无法从 /etc/openwrt_release 获取架构,使用 uname -m: $uname_m"
-        fi
+    if [[ -n "$openwrt_arch" ]]; then
+        debug "OpenWrt 架构覆盖: $uname_m -> $openwrt_arch (从 /etc/openwrt_release)"
+        uname_m="$openwrt_arch"
+    else
+        warn "无法从 /etc/openwrt_release 获取架构,使用 uname -m: $uname_m"
     fi
 
     # 检测 FPU 类型
@@ -347,7 +333,6 @@ detect_system() {
 
     if [[ -z "$arch" ]]; then
         error "不支持的架构: $uname_m (FPU: $fpu)"
-        error "请访问 https://github.com/yourusername/mynet 报告此问题"
         exit 1
     fi
 
@@ -356,16 +341,9 @@ detect_system() {
     echo "${os}|${arch}"
 }
 
-# 选择安装目录
+# 选择安装目录（OpenWrt 固定路径）
 get_default_install_dir() {
-    local os="$1"
-    case "$os" in
-        openwrt)  echo "/etc/mynet" ;;
-        linux)    echo "/usr/local/mynet" ;;
-        darwin)   echo "/usr/local/opt/mynet" ;;
-        windows)  echo "/c/Program Files/MyNet" ;;
-        *)        echo "/opt/mynet" ;;
-    esac
+    echo "/etc/mynet"
 }
 
 # 列出可用版本
@@ -587,7 +565,6 @@ parse_manifest() {
 
     # 构建文件信息
     local ext="tgz"
-    [[ "$os" == "windows" ]] && ext="zip"
     filename="mynet_${os}_${arch}_${target_version}.${ext}"
 
     # 尝试从manifest获取精确信息
@@ -652,17 +629,8 @@ extract_package() {
     log "正在解压安装包..." >&2
     mkdir -p "$extract_dir"
 
-    if [[ "$package_file" == *.zip ]]; then
-        if ! have_cmd unzip; then
-            error "需要 unzip 命令解压 ZIP 文件" >&2
-            exit 1
-        fi
-        debug "使用 unzip 解压" >&2
-        unzip -oq "$package_file" -d "$extract_dir"
-    else
-        debug "使用 tar 解压" >&2
-        tar -xzf "$package_file" -C "$extract_dir"
-    fi
+    debug "使用 tar 解压" >&2
+    tar -xzf "$package_file" -C "$extract_dir"
 
     # 检查解压结果
     debug "解压后目录内容:" >&2
@@ -775,9 +743,9 @@ install_files() {
     fi
 }
 
-# 创建系统链接
+# 创建系统链接（OpenWrt）
 create_system_links() {
-    local install_dir="$1" os="$2"
+    local install_dir="$1"
 
     local mynet_bin="$install_dir/bin/mynet"
     if [[ ! -x "$mynet_bin" ]]; then
@@ -785,16 +753,8 @@ create_system_links() {
         return 1
     fi
 
-    # 尝试创建系统级链接
-    if ln -sf "$mynet_bin" /usr/local/bin/mynet 2>/dev/null; then
-        success "已创建系统链接: /usr/local/bin/mynet"
-        return 0
-    fi
-
-    # 尝试创建用户级链接
-    if mkdir -p "$HOME/.local/bin" 2>/dev/null && ln -sf "$mynet_bin" "$HOME/.local/bin/mynet" 2>/dev/null; then
-        success "已创建用户链接: $HOME/.local/bin/mynet"
-        warn "请确保 $HOME/.local/bin 在您的 PATH 中"
+    if ln -sf "$mynet_bin" /usr/local/bin/mynet 2>/dev/null || ln -sf "$mynet_bin" /usr/bin/mynet 2>/dev/null; then
+        success "已创建系统链接"
         return 0
     fi
 
@@ -802,100 +762,17 @@ create_system_links() {
     return 1
 }
 
-# 平台特殊处理
+# 平台特殊处理（OpenWrt）
 handle_platform_specific() {
-    local install_dir="$1" os="$2"
+    local install_dir="$1"
 
-    case "$os" in
-        darwin)
-            log "处理 macOS 特定配置..."
+    log "设置 OpenWrt 权限..."
+    chmod -R 755 "$install_dir" 2>/dev/null || true
 
-            # 移除 quarantine 属性（防止 Gatekeeper 阻止）
-            if have_cmd xattr; then
-                debug "检查并移除 quarantine 属性"
-
-                # 检查主程序
-                if [[ -f "$install_dir/bin/mynet" ]]; then
-                    local attrs
-                    attrs=$(xattr "$install_dir/bin/mynet" 2>/dev/null || true)
-
-                    if echo "$attrs" | grep -q "com.apple.quarantine"; then
-                        log "移除主程序的 quarantine 属性..."
-                        xattr -d com.apple.quarantine "$install_dir/bin/mynet" 2>/dev/null || true
-                        success "已移除 quarantine 属性"
-                    else
-                        debug "主程序没有 quarantine 属性"
-                    fi
-                fi
-
-                # 移除整个目录的 quarantine 属性（递归）
-                debug "递归移除所有文件的 quarantine 属性"
-                xattr -dr com.apple.quarantine "$install_dir" 2>/dev/null || true
-            else
-                warn "未找到 xattr 命令，无法移除 quarantine 属性"
-                warn "如果遇到 \"无法验证开发者\" 错误，请手动运行:"
-                warn "  sudo xattr -dr com.apple.quarantine $install_dir"
-            fi
-
-            # 验证 Gatekeeper 状态
-            if have_cmd spctl; then
-                debug "检查 Gatekeeper 状态"
-                local gk_status
-                gk_status=$(spctl --status 2>/dev/null || echo "unknown")
-                debug "Gatekeeper: $gk_status"
-
-                if [[ "$gk_status" == *"enabled"* ]]; then
-                    log "检测到 Gatekeeper 已启用"
-                    log "如果遇到运行问题，可以尝试："
-                    log "  1. 右键点击应用 → 打开"
-                    log "  2. 或运行: sudo spctl --master-disable"
-                fi
-            fi
-
-            # 设置正确的权限
-            debug "设置 macOS 权限"
-            chmod +x "$install_dir/bin/mynet" 2>/dev/null || true
-            chmod +x "$install_dir/bin/mynetd" 2>/dev/null || true
-            chmod +x "$install_dir/bin/mynet-updater" 2>/dev/null || true
-
-            # 检查是否需要代码签名（仅提示）
-            if have_cmd codesign; then
-                local sign_status
-                sign_status=$(codesign -dv "$install_dir/bin/mynet" 2>&1 || echo "unsigned")
-
-                if echo "$sign_status" | grep -q "not signed"; then
-                    debug "程序未签名，可能需要在安全设置中允许运行"
-                else
-                    debug "代码签名状态: $(echo "$sign_status" | head -n1)"
-                fi
-            fi
-            ;;
-
-        openwrt)
-            # OpenWrt: 设置适当的文件权限
-            log "设置 OpenWrt 权限..."
-            chmod -R 755 "$install_dir" 2>/dev/null || true
-
-            # 确保脚本可执行
-            if [[ -d "$install_dir/scripts" ]]; then
-                find "$install_dir/scripts" -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
-            fi
-            ;;
-
-        linux)
-            # Linux: 设置标准权限
-            debug "设置 Linux 权限"
-            chmod 755 "$install_dir/bin/mynet" 2>/dev/null || true
-            chmod 755 "$install_dir/bin/mynetd" 2>/dev/null || true
-            chmod 755 "$install_dir/bin/mynet-updater" 2>/dev/null || true
-
-            # 检查 SELinux
-            if have_cmd getenforce && [[ "$(getenforce 2>/dev/null)" == "Enforcing" ]]; then
-                warn "检测到 SELinux 启用，如果遇到权限问题，请运行:"
-                warn "  sudo chcon -t bin_t $install_dir/bin/mynet"
-            fi
-            ;;
-    esac
+    # 确保脚本可执行
+    if [[ -d "$install_dir/scripts" ]]; then
+        find "$install_dir/scripts" -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
+    fi
 }
 
 # 验证安装
@@ -1021,7 +898,7 @@ main() {
 
     # 安装目录选择
     local install_dir_default
-    install_dir_default=$(get_default_install_dir "$os")
+    install_dir_default=$(get_default_install_dir)
 
     if [[ -n "${MYNET_INSTALL_DIR:-}" ]]; then
         # 环境变量指定目录（非交互模式）
@@ -1090,10 +967,10 @@ main() {
     install_files "$source_dir" "$install_dir"
 
     # 平台特殊处理
-    handle_platform_specific "$install_dir" "$os"
+    handle_platform_specific "$install_dir"
 
     # 创建系统链接
-    create_system_links "$install_dir" "$os"
+    create_system_links "$install_dir"
 
     # 验证安装
     verify_installation "$install_dir"

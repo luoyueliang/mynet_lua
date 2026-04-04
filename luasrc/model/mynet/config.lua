@@ -13,6 +13,21 @@ M.DEFAULT_MYNETD_BIN      = "/usr/bin/mynetd"
 M.MYNETD_JSON             = util.CONF_DIR .. "/mynetd.json"
 
 -- ─────────────────────────────────────────────────────────────
+-- 运行模式: "mynet"（在线用户模式）| "guest"（GNB 离线模式）
+-- ─────────────────────────────────────────────────────────────
+
+function M.get_mode()
+    local data = util.load_json_file(util.CONFIG_FILE)
+    return data and data.mode or nil
+end
+
+function M.set_mode(mode)
+    local data = util.load_json_file(util.CONFIG_FILE) or {}
+    data.mode = mode
+    return util.save_json_file(util.CONFIG_FILE, data)
+end
+
+-- ─────────────────────────────────────────────────────────────
 -- Server Config (config.json)
 -- ─────────────────────────────────────────────────────────────
 
@@ -166,6 +181,88 @@ function M.save_node_id(node_id)
     if not found then
         lines[#lines+1] = 'NODE_ID="' .. id_str .. '"'
     end
+    util.ensure_dir(util.CONF_DIR)
+    return util.write_file(util.VPN_CONF, table.concat(lines, "\n") .. "\n")
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- 生成完整 mynet.conf（bash-style KEY="VALUE" 格式）
+-- 供 rc.mynet init 脚本、route.mynet 等 shell 脚本使用
+-- 对齐 service-manager.sh generate_mynet_config()
+-- ─────────────────────────────────────────────────────────────
+function M.generate_mynet_conf(node_id)
+    local nid_str = util.int_str(node_id or 0)
+    local vpn_type = M.get_vpn_type()
+    local mynet_home = util.MYNET_HOME
+
+    local vpn_interface, vpn_binary, vpn_config_dir, vpn_pid_file, route_config
+    local gnb_bin, gnb_conf
+
+    if vpn_type == "wireguard" then
+        vpn_interface = "wg_" .. nid_str
+        vpn_binary = "wg-quick"
+        vpn_config_dir = mynet_home .. "/driver/wireguard/" .. nid_str
+        vpn_pid_file = "/var/run/wg-wg_" .. nid_str .. ".pid"
+        route_config = mynet_home .. "/conf/route.conf"
+        gnb_bin = ""
+        gnb_conf = ""
+    else
+        -- gnb (default)
+        vpn_interface = "gnb_tun"
+        gnb_bin = M.get_gnb_bin()
+        gnb_conf = util.GNB_CONF_DIR .. "/" .. nid_str
+        vpn_binary = gnb_bin
+        vpn_config_dir = gnb_conf
+        vpn_pid_file = gnb_conf .. "/gnb.pid"
+        route_config = mynet_home .. "/conf/route.conf"
+    end
+
+    local lines = {
+        "# MyNet 配置文件（自动生成）",
+        "# VPN 类型: " .. vpn_type .. ", 节点 ID: " .. nid_str,
+        "# 生成时间: " .. os.date("%Y-%m-%d %H:%M:%S"),
+        "",
+        "# 基础配置",
+        'ROUTER_MODE="auto"',
+        'VPN_ZONE="mynet"',
+        "",
+        "# VPN 类型配置",
+        'VPN_TYPE="' .. vpn_type .. '"',
+        'NODE_ID="' .. nid_str .. '"',
+        'VPN_INTERFACE="' .. vpn_interface .. '"',
+        "",
+        "# 驱动路径",
+        'VPN_BINARY="' .. vpn_binary .. '"',
+        'VPN_CONFIG="' .. vpn_config_dir .. '"',
+        'VPN_PID_FILE="' .. vpn_pid_file .. '"',
+        "",
+        "# GNB 配置",
+        'GNB_BIN="' .. (gnb_bin or "") .. '"',
+        'GNB_CONF="' .. (gnb_conf or "") .. '"',
+        "",
+        "# 路径配置",
+        'MYNET_HOME="' .. mynet_home .. '"',
+        'VPN_DRIVER_DIR="' .. mynet_home .. "/driver/" .. vpn_type .. '"',
+        'VPN_CONFIG_DIR="' .. vpn_config_dir .. '"',
+        'ROUTE_CONFIG="' .. route_config .. '"',
+        "",
+        "# 网络配置",
+        'NETWORK_CONFIG_ENABLED="1"',
+        'AUTO_ROUTE_SETUP="1"',
+        'ROUTE_TABLE_ID="100"',
+        'ROUTE_PRIORITY="1000"',
+        "",
+        "# 监控配置",
+        'HEALTH_CHECK_ENABLED="1"',
+        'HEALTH_CHECK_INTERVAL="60"',
+        'VPN_TIMEOUT="30"',
+        "",
+        "# 服务配置",
+        'AUTO_START="1"',
+        'RELOAD_CONFIG_ON_CHANGE="1"',
+        'CLEANUP_ON_STOP="1"',
+    }
+
     util.ensure_dir(util.CONF_DIR)
     return util.write_file(util.VPN_CONF, table.concat(lines, "\n") .. "\n")
 end

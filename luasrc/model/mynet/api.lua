@@ -166,4 +166,50 @@ function M.get_text(base_url, endpoint, token, zone_id)
     return util.trim(body or ""), nil
 end
 
+-- ─────────────────────────────────────────────────────────────
+-- Config Bundle — 单次请求获取全部配置 + 密钥
+-- GET /api/v2/nodes/{id}/config-bundle
+-- 返回: (bundle_table, nil) 或 (nil, error_string)
+-- bundle_table: { files={}, keys={} }
+-- fallback: 若 404 则返回 nil, "not_supported"
+-- ─────────────────────────────────────────────────────────────
+function M.get_config_bundle(base_url, node_id_str, token, zone_id)
+    local endpoint = "/api/v2/nodes/" .. node_id_str .. "/config-bundle"
+    local url = base_url .. endpoint
+    local body, status, err = do_curl("GET", url, nil, auth_headers(token, zone_id))
+    if err then return nil, err end
+    if status == 0 then return nil, "connection failed" end
+    if status == 404 then return nil, "not_supported" end
+    if status >= 400 then
+        return nil, string.format("api error %d", status)
+    end
+    local data = util.json_decode(body)
+    if not data then
+        return nil, "invalid JSON in config-bundle response"
+    end
+    return data, nil
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- 批量获取 peer 公钥
+-- POST /nodes/{id}/router-keys
+-- 返回: (keys_table, nil) 或 (nil, error_string)
+-- ─────────────────────────────────────────────────────────────
+function M.get_router_keys(base_url, node_id_str, token, zone_id)
+    local endpoint = "/nodes/" .. node_id_str .. "/router-keys"
+    local url = base_url .. endpoint
+    local resp, status, err = do_curl("POST", url, "{}", auth_headers(token, zone_id))
+    if err then return nil, err end
+    if status == 0 then return nil, "connection failed" end
+    if status == 404 then return nil, "not_supported" end
+    if status >= 400 then
+        return nil, string.format("api error %d", status)
+    end
+    local data = util.json_decode(resp)
+    if not data then
+        return nil, "invalid JSON in router-keys response"
+    end
+    return data, nil
+end
+
 return M

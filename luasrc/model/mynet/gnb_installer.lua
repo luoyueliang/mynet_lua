@@ -143,9 +143,7 @@ function M.detect_platform()
     res.uname_m = util.trim(util.exec("uname -m 2>/dev/null") or "")
     local um = res.uname_m
 
-    -- 操作系统
-    local _, owrt_code = util.exec_status("test -f /etc/openwrt_release 2>/dev/null")
-    res.os_name = (owrt_code == 0) and "openwrt" or "linux"
+    res.os_name = "openwrt"
 
     -- x86/x64
     if um == "x86_64" then
@@ -233,10 +231,7 @@ end
 
 -- os_aliases: openwrt 允许 fallback 到 linux
 local function os_aliases(os_name)
-    if os_name == "openwrt" then
-        return { "openwrt", "linux" }
-    end
-    return { os_name }
+    return { "openwrt", "linux" }
 end
 
 -- ─────────────────────────────────────────────────────────────

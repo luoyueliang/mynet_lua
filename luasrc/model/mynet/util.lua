@@ -9,6 +9,7 @@ local M = {}
 -- ─────────────────────────────────────────────────────────────
 
 M.MYNET_HOME  = "/etc/mynet"
+M.APP_VERSION = "1.0.0"
 M.CONF_DIR    = M.MYNET_HOME .. "/conf"
 M.CRED_FILE   = M.CONF_DIR  .. "/credential.json"
 M.CONFIG_FILE = M.CONF_DIR  .. "/config.json"
@@ -37,8 +38,8 @@ local function _json_encode(obj)
     if t == "nil"     then return "null" end
     if t == "boolean" then return obj and "true" or "false" end
     if t == "number"  then
-        -- 避免科学计数法：整数型用 %.0f，浮点型保留小数
-        if obj == math.floor(obj) and obj >= -1e15 and obj <= 1e15 then
+        -- 避免科学计数法：整数型用 %.0f（双精度最大安全整数 2^53 ≈ 9e15）
+        if obj == math.floor(obj) and obj >= -9e15 and obj <= 9e15 then
             return string.format("%.0f", obj)
         end
         return tostring(obj)
@@ -149,6 +150,15 @@ function M.write_file(path, content)
     return true
 end
 
+-- 写文件并设置权限 0600（敏感文件：credential / private key）
+function M.write_file_secure(path, content)
+    local ok, err = M.write_file(path, content)
+    if ok then
+        os.execute("chmod 600 '" .. path .. "' 2>/dev/null")
+    end
+    return ok, err
+end
+
 -- 加载 JSON 文件 → Lua table
 function M.load_json_file(path)
     local c = M.read_file(path)
@@ -170,6 +180,33 @@ end
 function M.trim(s)
     if not s then return "" end
     return s:match("^%s*(.-)%s*$")
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- 输入校验（安全加固，防注入）
+-- ─────────────────────────────────────────────────────────────
+
+-- 校验 node_id：纯数字字符串或 number
+function M.validate_node_id(v)
+    if type(v) == "number" then return true end
+    if type(v) == "string" and v:match("^%d+$") then return true end
+    return false
+end
+
+-- 校验 hex 字符串（密钥等）
+function M.validate_hex(v, expected_len)
+    if type(v) ~= "string" then return false end
+    v = v:gsub("%s+", "")
+    if not v:match("^[0-9a-fA-F]+$") then return false end
+    if expected_len and #v ~= expected_len then return false end
+    return true
+end
+
+-- 转义 shell 参数（防止命令注入）
+-- 用单引号包裹并转义内部单引号
+function M.shell_escape(s)
+    if not s then return "''" end
+    return "'" .. s:gsub("'", "'\\''") .. "'"
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -213,19 +250,108 @@ function M.get_machine_id()
 end
 
 -- ─────────────────────────────────────────────────────────────
--- 日志（写到文件，非阻断性）
+-- 统一结果包装（对齐 client {success, data, message} 信封格式）
+-- 新代码建议使用这些 helper；已有函数逐步迁移。
 -- ─────────────────────────────────────────────────────────────
 
-function M.log(level, msg)
-    local ts   = os.date("%Y-%m-%d %H:%M:%S")
-    local line = string.format("[%s] [%-5s] %s\n", ts, level, msg)
+function M.wrap_ok(data)
+    return { ok = true, data = data }
+end
+
+function M.wrap_err(msg)
+    return { ok = false, error = msg or "unknown error" }
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- 日志（写到文件，非阻断性）
+-- 支持模块标签：log(level, module, msg) 或 log(level, msg)
+-- 日志级别过滤：M.LOG_LEVEL 控制最低输出级别
+-- ─────────────────────────────────────────────────────────────
+
+local _LOG_LEVELS = { DEBUG = 1, INFO = 2, WARN = 3, ERROR = 4 }
+M.LOG_LEVEL = "INFO"   -- 默认级别；外部可在运行时覆盖
+
+local function _should_log(level)
+    local cur = _LOG_LEVELS[M.LOG_LEVEL] or 2
+    local req = _LOG_LEVELS[level]       or 2
+    return req >= cur
+end
+
+function M.log(level, module_or_msg, msg)
+    if not _should_log(level) then return end
+    local ts = os.date("%Y-%m-%d %H:%M:%S")
+    local line
+    if msg then
+        -- 三参数形式: log(level, module, msg)
+        line = string.format("[%s] [%-5s] [%s] %s\n", ts, level, module_or_msg, msg)
+    else
+        -- 二参数形式: log(level, msg) — 向后兼容
+        line = string.format("[%s] [%-5s] %s\n", ts, level, module_or_msg)
+    end
     M.ensure_dir(M.MYNET_HOME .. "/logs")
+    -- 轮转检查（每次写前检查，开销极低——仅在文件达 2MB 时触发）
+    M.rotate_logs()
     local f = io.open(M.LOG_FILE, "a")
     if f then f:write(line); f:close() end
 end
 
+function M.log_debug(msg) M.log("DEBUG", msg) end
 function M.log_info(msg)  M.log("INFO",  msg) end
 function M.log_warn(msg)  M.log("WARN",  msg) end
 function M.log_error(msg) M.log("ERROR", msg) end
+
+-- ─────────────────────────────────────────────────────────────
+-- 日志轮转（自包含，不依赖 logrotate 命令）
+-- max_size: 最大字节数（默认 2MB），max_files: 保留轮转文件数（默认 3）
+-- ─────────────────────────────────────────────────────────────
+function M.rotate_logs(max_size, max_files)
+    max_size  = max_size  or (2 * 1024 * 1024)  -- 2MB
+    max_files = max_files or 3
+
+    local log = M.LOG_FILE
+    -- 获取文件大小
+    local f = io.open(log, "r")
+    if not f then return end
+    local size = f:seek("end")
+    f:close()
+    if not size or size < max_size then return end
+
+    -- 轮转: .3 → 删除, .2 → .3, .1 → .2, log → .1
+    os.remove(log .. "." .. tostring(max_files))
+    for i = max_files - 1, 1, -1 do
+        os.rename(log .. "." .. tostring(i), log .. "." .. tostring(i + 1))
+    end
+    os.rename(log, log .. ".1")
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- HMAC-SHA256 签名（对齐 client heartbeat/signer.js）
+-- 使用 OpenSSL CLI：echo -n "data" | openssl dgst -sha256 -hmac "key"
+-- 返回: hex 签名字符串 或 nil
+-- ─────────────────────────────────────────────────────────────
+function M.hmac_sha256(key, data)
+    if not key or key == "" or not data then return nil end
+    -- 通过 stdin 传递数据，避免命令行长度限制和注入
+    local tmp = os.tmpname()
+    local f = io.open(tmp, "w")
+    if not f then return nil end
+    f:write(data)
+    f:close()
+    -- key 需要安全传递（通过 hex:key 避免 shell 注入）
+    local safe_key = key:gsub("'", "'\\''")
+    local cmd = "openssl dgst -sha256 -hmac '" .. safe_key .. "' '" .. tmp .. "' 2>/dev/null"
+    local out = M.exec(cmd)
+    os.remove(tmp)
+    if not out then return nil end
+    -- 输出格式: "HMAC-SHA256(file)= abcdef..." 或 "(stdin)= abcdef..."
+    local hex = out:match("=%s*([0-9a-fA-F]+)")
+    return hex
+end
+
+-- 生成 heartbeat 签名（node_id + timestamp + metrics_json）
+function M.sign_heartbeat(node_id_str, timestamp, metrics_json, priv_key_hex)
+    local payload = node_id_str .. ":" .. timestamp .. ":" .. metrics_json
+    return M.hmac_sha256(priv_key_hex, payload)
+end
 
 return M

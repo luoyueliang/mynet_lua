@@ -34,7 +34,7 @@ function M.save(c)
     if not c or not c.token or c.token == "" then
         return false, "empty token"
     end
-    return util.save_json_file(M.CRED_FILE, {
+    local json_str = util.json_encode({
         user_id       = util.int_str(c.user_id  or 0),
         user_email    = c.user_email    or "",
         token         = c.token,
@@ -44,6 +44,8 @@ function M.save(c)
         expires_at    = c.expires_at    or "",
         zone_id       = util.int_str(c.zone_id  or 0),
     })
+    if not json_str then return false, "json encode failed" end
+    return util.write_file_secure(M.CRED_FILE, json_str)
 end
 
 -- ─────────────────────────────────────────────────────────────

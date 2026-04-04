@@ -1,87 +1,35 @@
-/* mynet.css — MyNet LuCI 管理界面样式 */
+/* mynet.css — MyNet LuCI app-specific styles */
+/* Standard component styling (cards, buttons, tables, forms, alerts, tabs) */
+/* is handled by the Argon theme via cbi-* / table / alert-message classes. */
+/* Only app-specific elements that have no Argon equivalent are styled here. */
 
-/* ─── 变量 ───────────────────────────────────────────────── */
+/* ─── Variables ───────────────────────────────────────────── */
+/* Aliases to Argon theme vars with safe fallbacks */
 :root {
-    --mn-primary: #3b82f6;
-    --mn-green: #22c55e;
-    --mn-red: #ef4444;
-    --mn-yellow: #f59e0b;
-    --mn-gray: #6b7280;
-    --mn-bg: #f9fafb;
+    --mn-primary: var(--primary, #5e72e4);
+    --mn-green: var(--success, #2dce89);
+    --mn-red: var(--danger, #f5365c);
+    --mn-yellow: var(--orange, #fb6340);
+    --mn-gray: var(--gray, #8898aa);
+    --mn-text: var(--gray-dark, #32325d);
+    --mn-text-muted: var(--gray, #8898aa);
+    --mn-bg: var(--background-color, #f8f9fe);
     --mn-card-bg: #ffffff;
-    --mn-border: #e5e7eb;
-    --mn-radius: 8px;
-    --mn-shadow: 0 1px 3px rgba(0, 0, 0, .1), 0 1px 2px rgba(0, 0, 0, .06);
-    --mn-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mn-border: var(--lighter, #e9ecef);
+    --mn-header-bg: #f6f9fc;
+    --mn-radius: 6px;
+    --mn-mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+    --mn-pre-bg: #f6f9fc;
+    --mn-pre-color: #525f7f;
 }
 
-/* ─── 全局重置 ────────────────────────────────────────────── */
-.mn-grid,
-.mn-card,
-.mn-table-wrap,
-.mn-form,
-.mn-btn,
-.mn-alert,
-.mn-section,
-.mn-pagination,
-.mn-actions-bar,
-.mn-login-wrap,
-.mn-empty {
-    box-sizing: border-box;
-    font-family: var(--mn-font);
-}
+/* ─── Grid layout (dashboard) ─────────────────────────────── */
+/* Removed: .mn-grid card layout — dashboard now uses full-width table rows */
 
-/* ─── 网格布局 ────────────────────────────────────────────── */
-.mn-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 16px;
-    margin: 16px 0;
-}
+/* ─── Ensure all mynet tables are full-width ─────────────── */
+.cbi-section .table { width: 100%; }
 
-/* ─── 卡片 ───────────────────────────────────────────────── */
-.mn-card {
-    background: var(--mn-card-bg);
-    border: 1px solid var(--mn-border);
-    border-radius: var(--mn-radius);
-    box-shadow: var(--mn-shadow);
-    display: flex;
-    flex-direction: column;
-}
-
-.mn-card-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--mn-border);
-}
-
-.mn-card-header h3 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-}
-
-.mn-card-body {
-    flex: 1;
-    padding: 12px 16px;
-}
-
-.mn-card-body p {
-    margin: 4px 0;
-    font-size: 14px;
-}
-
-.mn-card-actions {
-    padding: 10px 16px;
-    border-top: 1px solid var(--mn-border);
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-/* ─── 状态指示点 ─────────────────────────────────────────── */
+/* ─── Status indicator dots ──────────────────────────────── */
 .mn-dot {
     display: inline-block;
     width: 10px;
@@ -89,560 +37,70 @@
     border-radius: 50%;
     flex-shrink: 0;
 }
+.mn-dot-green  { background: var(--mn-green); box-shadow: 0 0 0 3px rgba(34,197,94,.2); }
+.mn-dot-red    { background: var(--mn-red);   box-shadow: 0 0 0 3px rgba(239,68,68,.2); }
+.mn-dot-gray   { background: var(--mn-gray); }
+.mn-dot-yellow { background: var(--mn-yellow); }
 
-.mn-dot-green {
-    background: var(--mn-green);
-    box-shadow: 0 0 0 3px rgba(34, 197, 94, .2);
+/* ─── Status text colors ─────────────────────────────────── */
+.mn-running { color: var(--mn-green); font-weight: 600; }
+.mn-stopped { color: var(--mn-red);   font-weight: 600; }
+.mn-warn    { color: var(--mn-yellow); font-weight: 600; }
+.mn-muted   { color: var(--mn-text-muted); }
+.mn-small   { font-size: small; }
+.mn-hint    { margin: 2px 0; color: var(--mn-text-muted); font-size: small; }
+
+/* ─── Utility ────────────────────────────────────────────── */
+.mn-hidden { display: none !important; }
+
+/* ─── Pre-formatted blocks ───────────────────────────────── */
+.mn-pre {
+    background: var(--mn-pre-bg);
+    padding: 1rem;
+    border-radius: .25rem;
+    font-size: .8rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow: auto;
+    max-height: 400px;
+}
+.mn-terminal {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 1rem;
+    border-radius: .25rem;
+    font-size: .8rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 400px;
+    overflow: auto;
 }
 
-.mn-dot-red {
-    background: var(--mn-red);
-    box-shadow: 0 0 0 3px rgba(239, 68, 68, .2);
-}
+/* ─── Section layout helpers ─────────────────────────────── */
+.mn-section-body    { padding: 0 1.25rem 1rem; }
+.mn-section-actions { padding: .5rem 1.25rem 1rem; display: flex; gap: 6px; }
 
-.mn-dot-gray {
-    background: var(--mn-gray);
-}
-
-.mn-dot-yellow {
-    background: var(--mn-yellow);
-}
-
-/* ─── 按钮 ───────────────────────────────────────────────── */
-.mn-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px 14px;
-    border: none;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    text-decoration: none;
-    background: var(--mn-primary);
-    color: #fff;
-    transition: opacity .15s;
-}
-
-.mn-btn:hover {
-    opacity: .85;
-}
-
-.mn-btn:disabled {
-    opacity: .5;
-    cursor: not-allowed;
-}
-
-.mn-btn:active {
-    opacity: .7;
-}
-
-.mn-btn-secondary {
-    background: var(--mn-border);
-    color: #374151;
-}
-
-.mn-btn-green {
-    background: var(--mn-green);
-}
-
-.mn-btn-red {
-    background: var(--mn-red);
-}
-
-.mn-btn-yellow {
-    background: var(--mn-yellow);
-    color: #1f2937;
-}
-
-.mn-btn-sm {
-    padding: 4px 10px;
-    font-size: 12px;
-}
-
-.mn-btn-block {
-    width: 100%;
-}
-
-/* ─── 表格 ───────────────────────────────────────────────── */
-.mn-table-wrap {
-    overflow-x: auto;
-    border: 1px solid var(--mn-border);
-    border-radius: var(--mn-radius);
-    margin: 12px 0;
-}
-
-.mn-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
-}
-
-.mn-table th {
-    background: var(--mn-bg);
-    padding: 10px 14px;
-    text-align: left;
-    font-weight: 600;
-    border-bottom: 1px solid var(--mn-border);
-    white-space: nowrap;
-}
-
-.mn-table td {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--mn-border);
-    vertical-align: middle;
-}
-
-.mn-table tr:last-child td {
-    border-bottom: none;
-}
-
-.mn-table tr:hover td {
-    background: var(--mn-bg);
-}
-
-.mn-table .mn-row-active td {
-    background: #eff6ff;
-}
-
-/* Key-Value 小表格 */
-.mn-kv {
-    width: 100%;
-    font-size: 14px;
-}
-
-.mn-kv th {
-    font-weight: 500;
-    color: var(--mn-gray);
-    padding: 3px 12px 3px 0;
-    white-space: nowrap;
-}
-
-.mn-kv td {
-    padding: 3px 0;
-}
-
-/* ─── 徽章 ───────────────────────────────────────────────── */
+/* ─── Badges ─────────────────────────────────────────────── */
 .mn-badge {
     display: inline-block;
-    padding: 2px 7px;
-    border-radius: 999px;
+    padding: 2px 8px;
+    border-radius: 4px;
     font-size: 11px;
-    font-weight: 600;
-    background: #e5e7eb;
-    color: #4b5563;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    background: var(--mn-border);
+    color: var(--mn-text);
 }
-
-.mn-badge-green {
-    background: #dcfce7;
-    color: #15803d;
-}
-
 .mn-badge-ok {
-    background: #dcfce7;
-    color: #15803d;
+    background: rgba(45,206,137,.15);
+    color: #1aae6f;
 }
-
 .mn-badge-warn {
-    background: #fef9c3;
-    color: #854d0e;
+    background: rgba(251,99,64,.15);
+    color: #fb6340;
 }
-
-.mn-badge-blue {
-    background: #dbeafe;
-    color: #1d4ed8;
-}
-
-/* ─── 警示框 ─────────────────────────────────────────────── */
-.mn-alert {
-    padding: 10px 14px;
-    border-radius: var(--mn-radius);
-    margin: 10px 0;
-    font-size: 14px;
-}
-
-.mn-alert-error {
-    background: #fee2e2;
-    color: #991b1b;
-    border: 1px solid #fca5a5;
-}
-
-.mn-alert-info {
-    background: #dbeafe;
-    color: #1e40af;
-    border: 1px solid #93c5fd;
-}
-
-/* ─── 表单 ───────────────────────────────────────────────── */
-.mn-form {
-    max-width: 480px;
-}
-
-.mn-form-wide {
-    max-width: 640px;
-}
-
-.mn-form-group {
-    margin-bottom: 16px;
-}
-
-.mn-form-group label {
-    display: block;
-    font-size: 14px;
-    font-weight: 500;
-    margin-bottom: 5px;
-}
-
-.mn-form-group input {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid var(--mn-border);
-    border-radius: 6px;
-    font-size: 14px;
-    outline: none;
-    transition: border-color .15s;
-}
-
-.mn-form-group input:focus {
-    border-color: var(--mn-primary);
-}
-
-.mn-form-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
-}
-
-/* ─── 登录页 ─────────────────────────────────────────────── */
-.mn-login-wrap {
-    display: flex;
-    justify-content: center;
-    padding: 48px 16px;
-}
-
-.mn-login-box {
-    width: 100%;
-    max-width: 380px;
-    background: var(--mn-card-bg);
-    border: 1px solid var(--mn-border);
-    border-radius: var(--mn-radius);
-    padding: 32px 28px;
-    box-shadow: var(--mn-shadow);
-}
-
-.mn-login-logo {
-    text-align: center;
-    margin-bottom: 24px;
-}
-
-.mn-login-logo h2 {
-    margin: 0 0 4px;
-}
-
-.mn-login-hint {
-    text-align: center;
-    margin-top: 16px;
-    font-size: 12px;
-}
-
-/* ─── 区域/节点名称徽章 ──────────────────────────────────── */
-.mn-zone-badge {
-    font-size: 14px;
-    font-weight: 400;
-    padding: 2px 10px;
-    background: #dbeafe;
-    color: #1e40af;
-    border-radius: 999px;
-    margin-left: 8px;
-    vertical-align: middle;
-}
-
-/* ─── 代码预览块 ─────────────────────────────────────────── */
-.mn-pre {
-    background: #1e293b;
-    color: #e2e8f0;
-    padding: 14px 16px;
-    border-radius: var(--mn-radius);
-    font-family: monospace;
-    font-size: 12px;
-    overflow-x: auto;
-    white-space: pre;
-    line-height: 1.6;
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-/* ─── Section ────────────────────────────────────────────── */
-.mn-section {
-    margin: 16px 0;
-}
-
-.mn-section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 6px;
-}
-
-.mn-section-header h3 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-/* ─── 分页 ───────────────────────────────────────────────── */
-.mn-pagination {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 10px 0;
-}
-
-/* ─── 操作栏 ─────────────────────────────────────────────── */
-.mn-actions-bar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 16px 0;
-    padding-top: 12px;
-    border-top: 1px solid var(--mn-border);
-}
-
-/* ─── 工具 ───────────────────────────────────────────────── */
-.mn-muted {
-    color: var(--mn-gray);
-}
-
-.mn-small {
-    font-size: 12px;
-}
-
-.mn-hint {
-    font-size: 14px;
-    color: var(--mn-gray);
-}
-
-.mn-running {
-    color: var(--mn-green);
-}
-
-.mn-stopped {
-    color: var(--mn-red);
-}
-
-.mn-hidden {
-    display: none !important;
-}
-
-/* ─── Tab 导航 ───────────────────────────────────────────── */
-.mn-tabs {
-    margin: 12px 0;
-}
-
-.mn-tab-nav {
-    display: flex;
-    gap: 0;
-    border-bottom: 2px solid var(--mn-border);
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-}
-
-.mn-tab-btn {
-    padding: 8px 18px;
-    border: none;
-    background: none;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    color: var(--mn-gray);
-    border-bottom: 2px solid transparent;
-    margin-bottom: -2px;
-    transition: color .15s, border-color .15s;
-    white-space: nowrap;
-    text-decoration: none;
-}
-
-.mn-tab-btn:hover {
-    color: var(--mn-primary);
-}
-
-.mn-tab-btn.active {
-    color: var(--mn-primary);
-    border-bottom-color: var(--mn-primary);
-}
-
-.mn-tab-badge {
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--mn-green);
-    margin-left: 5px;
-    vertical-align: middle;
-}
-
-.mn-tab-badge.pending {
-    background: var(--mn-yellow);
-}
-
-.mn-tab-panel {
-    display: none;
-}
-
-.mn-tab-panel.active {
-    display: block;
-}
-
-/* ─── label-inline ───────────────────────────────────────── */
-.mn-label-inline {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-}
-
-/* ─── select 元素样式 ────────────────────────────────────── */
-.mn-form-group select {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid var(--mn-border);
-    border-radius: 6px;
-    font-size: 14px;
-    background: #fff;
-    outline: none;
-    transition: border-color .15s;
-}
-
-.mn-form-group select:focus {
-    border-color: var(--mn-primary);
-}
-
-/* ─── 服务状态块 ─────────────────────────────────────────── */
-.mn-service-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--mn-border);
-    flex-wrap: wrap;
-}
-
-.mn-service-row:last-child {
-    border-bottom: none;
-}
-
-.mn-service-name {
-    font-weight: 600;
-    font-size: 14px;
-    min-width: 120px;
-}
-
-.mn-service-btns {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-left: auto;
-}
-
-/* ─── 代码输出块（浅色） ──────────────────────────────────── */
-.mn-pre-light {
-    background: var(--mn-bg);
-    border: 1px solid var(--mn-border);
-    border-radius: var(--mn-radius);
-    padding: 12px 16px;
-    font-family: monospace;
-    font-size: 12px;
-    overflow-x: auto;
-    white-space: pre;
-    line-height: 1.6;
-    max-height: 360px;
-    overflow-y: auto;
-}
-
-/* ─── alert 成功色 ───────────────────────────────────────── */
-.mn-alert-success {
-    background: #dcfce7;
-    color: #15803d;
-    border: 1px solid #86efac;
-}
-
-.mn-alert-warn {
-    background: #fef9c3;
-    color: #854d0e;
-    border: 1px solid #fde047;
-}
-
-.mn-divider {
-    border: none;
-    border-top: 1px solid var(--mn-border);
-    margin: 24px 0;
-}
-
-/* ─── Toast 通知 ─────────────────────────────────────────── */
-.mn-toast {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    z-index: 9999;
-    padding: 12px 20px;
-    border-radius: var(--mn-radius);
-    background: #1e293b;
-    color: #f1f5f9;
-    font-size: 14px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, .25);
-    animation: mnFadeIn .2s ease;
-}
-
-.mn-toast-error {
-    background: #991b1b;
-}
-
-@keyframes mnFadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* ─── 空状态 ─────────────────────────────────────────────── */
-.mn-empty {
-    text-align: center;
-    padding: 40px 16px;
-    color: var(--mn-gray);
-}
-
-.mn-empty p {
-    font-size: 15px;
-}
-
-/* Inline checkbox label */
-.mn-label-inline {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-}
-.mn-label-inline input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-}
-
-/* ─── 通用颜色辅助 ────────────────────────────────────────── */
-.mn-warn {
-    color: var(--mn-yellow);
-    font-weight: 600;
-}
-
-/* ─── Badge ──────────────────────────────────────────────── */
 .mn-badge-local {
     display: inline-block;
     padding: 1px 5px;
@@ -653,110 +111,22 @@
     margin-left: 4px;
     vertical-align: middle;
 }
-.mn-badge-info {
+
+/* ─── Info tag / bypass ──────────────────────────────────── */
+.mn-info-bypass { color: #fb6340; font-weight: 600; }
+.mn-info-tag {
     display: inline-block;
-    padding: 2px 8px;
-    border-radius: 12px;
-    background: #dbeafe;
-    color: #1d4ed8;
-    font-size: 0.8em;
+    font-size: 0.78em;
     font-weight: 600;
-    margin-left: 6px;
+    color: var(--mn-text-muted);
+    background: var(--mn-border);
+    padding: 0 6px;
+    border-radius: 3px;
     vertical-align: middle;
 }
 
-/* ─── GNB Monitor 表格 ──────────────────────────────────── */
-.mn-gnb-table {
-    font-size: 0.85em;
-    min-width: 900px;
-}
-.mn-gnb-table th {
-    white-space: nowrap;
-    background: #f1f5f9;
-    padding: 6px 10px;
-    font-weight: 600;
-    border-bottom: 2px solid var(--mn-border);
-}
-.mn-gnb-table td {
-    padding: 5px 10px;
-    border-bottom: 1px solid var(--mn-border);
-    vertical-align: middle;
-}
-.mn-gnb-local td {
-    background: #f0fdf4;
-}
-.mn-gnb-table code {
-    font-size: 0.9em;
-}
-.mn-table-wrap {
-    overflow-x: auto;
-}
-
-/* ─── btn 激活态 ─────────────────────────────────────────── */
-.mn-btn-active {
-    background: var(--mn-primary);
-    color: #fff;
-    border-color: var(--mn-primary);
-}
-
-/* ─── 路由器信息面板（Dashboard 第一屏） ─────────────────── */
-.mn-info-panel {
-    background: #f8fafc;
-    border: 1px solid var(--mn-border);
-    border-radius: 8px;
-    padding: 10px 16px;
-    margin-bottom: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.mn-info-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 4px 8px;
-    font-size: 0.88em;
-    line-height: 1.5;
-}
-
-.mn-info-label {
-    font-weight: 600;
-    color: #64748b;
-    white-space: nowrap;
-    min-width: 46px;
-}
-
-.mn-info-value {
-    color: #1e293b;
-}
-
-.mn-info-sep {
-    color: #cbd5e1;
-    margin: 0 2px;
-}
-
-.mn-info-bypass {
-    color: #d97706;
-    font-weight: 600;
-}
-
-.mn-link {
-    color: var(--mn-primary);
-    text-decoration: none;
-    font-weight: 500;
-}
-.mn-link:hover {
-    text-decoration: underline;
-}
-
-/* 依赖检查列表 */
-.mn-dep-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 10px;
-}
-
+/* ─── Dependency list ────────────────────────────────────── */
+.mn-dep-list { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .mn-dep-item {
     display: inline-flex;
     align-items: center;
@@ -766,67 +136,44 @@
     border-radius: 10px;
     font-weight: 500;
 }
+.mn-dep-ok   { color: #1aae6f; background: rgba(45,206,137,.12); }
+.mn-dep-fail { color: #f5365c; background: rgba(245,54,92,.12); }
+.mn-dep-hint { font-weight: 400; opacity: 0.8; font-style: italic; }
 
-.mn-dep-ok {
-    color: #15803d;
-    background: #dcfce7;
-}
-
-.mn-dep-fail {
-    color: #b91c1c;
-    background: #fee2e2;
-}
-
-.mn-dep-hint {
-    font-weight: 400;
-    opacity: 0.8;
-    font-style: italic;
-}
-
-/* 防火墙转发规则标签 */
-.mn-fw-rules {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px;
-}
-
+/* ─── Firewall rule tag ──────────────────────────────────── */
 .mn-fw-rule {
-    background: #e0f2fe;
-    color: #0369a1;
-    padding: 1px 5px;
+    background: rgba(94,114,228,.1);
+    color: #5e72e4;
+    padding: 1px 6px;
     border-radius: 4px;
     font-size: 0.83em;
 }
 
-
-/* ─── GNB 自动安装进度面板 ─────────────────────────────── */
+/* ─── GNB auto-install panel ─────────────────────────────── */
 .mn-gnb-install-panel {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     padding: 6px 0 4px;
-    border-top: 1px dashed var(--mn-border, #e2e8f0);
+    border-top: 1px dashed var(--mn-border);
     margin-top: 4px;
     font-size: 0.88em;
 }
-
 .mn-gnb-spin {
     display: inline-block;
     animation: mn-spin 1.2s linear infinite;
-    color: var(--mn-primary, #3b82f6);
+    color: var(--mn-primary);
     font-size: 1.1em;
 }
-
 @keyframes mn-spin { to { transform: rotate(360deg); } }
-
 .mn-gnb-install-log {
     margin-top: 4px;
-    font-family: monospace;
+    font-family: var(--mn-mono);
     font-size: 0.78em;
-    background: #1e293b;
-    color: #94a3b8;
-    padding: 5px 10px;
+    background: var(--mn-pre-bg);
+    color: var(--mn-pre-color);
+    padding: 6px 12px;
     border-radius: 4px;
     max-height: 80px;
     overflow-y: auto;
@@ -835,145 +182,159 @@
     width: 100%;
 }
 
-/* ─── Dashboard 信息面板 - 表格布局 ─────────────────────── */
-.mn-info-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875em;
-    line-height: 1.65;
+/* ─── GNB peer table local row highlight ─────────────────── */
+.mn-gnb-local td,
+.mn-gnb-local .td,
+.tr.mn-gnb-local .td {
+    background: rgba(45,206,137,.06);
 }
 
-.mn-info-table th {
-    font-weight: 600;
-    color: #64748b;
-    white-space: nowrap;
-    text-align: left;
-    vertical-align: top;
-    padding: 3px 14px 3px 0;
-    width: 1%;   /* shrink to label width */
+/* ─── Active row highlight (wizard/node-manager tables) ──── */
+.tr.mn-row-active .td {
+    background: rgba(94,114,228,.06);
 }
 
-.mn-info-table td {
-    color: #1e293b;
-    padding: 3px 0;
-    vertical-align: top;
-}
-
-.mn-info-table tr + tr th,
-.mn-info-table tr + tr td {
-    border-top: 1px solid transparent;
-}
-
-.mn-info-tag {
-    display: inline-block;
-    font-size: 0.78em;
-    font-weight: 600;
-    color: #64748b;
-    background: #e2e8f0;
-    padding: 0 5px;
-    border-radius: 3px;
-    vertical-align: middle;
-}
-
-/* ─────────────────────────────────────────
-   Node 配置页
-   ───────────────────────────────────────── */
-
-/* 配置块 — 每个配置文件一块 */
+/* ─── Node page: config blocks ───────────────────────────── */
 .mn-config-block {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
+    background: var(--mn-card-bg);
+    border: 1px solid var(--mn-border);
+    border-radius: var(--mn-radius);
     margin-bottom: 12px;
     overflow: hidden;
 }
-
 .mn-config-header {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px 14px;
-    background: #f1f5f9;
-    border-bottom: 1px solid #e2e8f0;
+    padding: 10px 16px;
+    background: var(--mn-header-bg);
+    border-bottom: 1px solid var(--mn-border);
     flex-wrap: wrap;
 }
-
-.mn-config-name  { font-weight: 600; font-size: 0.92em; color: #1e293b; min-width: 110px; }
-.mn-config-hint  { font-size: 0.80em; flex: 1; }
+.mn-config-name   { font-weight: 600; font-size: 0.92em; color: var(--mn-text); min-width: 110px; }
 .mn-config-status { font-size: 0.80em; }
+.mn-flex-gap { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
 
-.mn-flex-gap { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+/* ─── Toast notification ─────────────────────────────────── */
+.mn-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 9999;
+    padding: 14px 24px;
+    border-radius: var(--mn-radius);
+    background: #172b4d;
+    color: #f1f5f9;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 15px 35px rgba(50,50,93,.1), 0 5px 15px rgba(0,0,0,.07);
+    animation: mnFadeIn .2s ease;
+}
+.mn-toast-error { background: #f5365c; }
+@keyframes mnFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
 
-/* 切换节点行 */
-.mn-node-switch-row {
+/* ─── Health check section ───────────────────────────────── */
+.mn-health-section { margin-bottom: 8px; }
+.mn-health-list { padding: 0 1.25rem 1rem; display: flex; flex-direction: column; gap: 8px; }
+.mn-health-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; border-radius: 6px; font-size: 0.92em;
+}
+.mn-health-error { background: rgba(239,68,68,.08); border-left: 3px solid #ef4444; }
+.mn-health-warn  { background: rgba(245,158,11,.08); border-left: 3px solid #f59e0b; }
+.mn-health-ok    { background: rgba(34,197,94,.08);  border-left: 3px solid #22c55e; }
+.mn-health-icon  { font-size: 1.1em; flex-shrink: 0; }
+.mn-health-text  { flex: 1; }
+.mn-health-btn   { padding: 2px 12px; font-size: 0.85em; white-space: nowrap; }
+
+/* ─── Local / offline mode banner ────────────────────────── */
+.mn-offline-banner, .mn-local-banner {
+    background: rgba(59,130,246,.06);
+    border: 1px solid rgba(59,130,246,.25);
+    border-radius: 8px;
+    padding: 14px 20px;
+    margin-bottom: 20px;
     display: flex;
     align-items: center;
-    gap: 10px;
     flex-wrap: wrap;
+    gap: 8px 16px;
 }
-
-.mn-select {
-    padding: 5px 10px;
-    border: 1px solid #cbd5e1;
-    border-radius: 5px;
-    font-size: 0.9em;
-    min-width: 200px;
-    max-width: 400px;
-    background: #fff;
-}
-
-/* 私钥导入面板 */
-.mn-key-import-panel {
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.mn-key-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-.mn-key-label {
-    font-size: 0.82em;
-    color: #64748b;
-    min-width: 110px;
-    padding-top: 6px;
-}
-
-.mn-privkey-textarea {
+.mn-offline-banner .mn-offline-text,
+.mn-local-banner .mn-offline-text {
     flex: 1;
-    min-width: 220px;
-    max-width: 480px;
-    font-family: monospace;
-    font-size: 0.85em;
-    padding: 6px 8px;
-    border: 1px solid #cbd5e1;
-    border-radius: 4px;
-    resize: vertical;
+    font-size: 0.92em;
+    color: #5b7083;
 }
 
-.mn-file-input {
-    font-size: 0.85em;
+/* ─── Login page (special layout, not cbi-based) ─────────── */
+.mn-login-wrap {
+    display: flex;
+    justify-content: center;
+    padding: 48px 16px;
+}
+.mn-login-box {
+    width: 100%;
+    max-width: 380px;
+    background: var(--mn-card-bg);
+    border: 1px solid var(--mn-border);
+    border-radius: var(--mn-radius);
+    padding: 36px 32px;
+    box-shadow: 0 0 2rem 0 rgba(136,152,170,.15);
+}
+.mn-login-logo {
+    text-align: center;
+    margin-bottom: 28px;
+}
+.mn-login-logo h2 {
+    margin: 0 0 4px;
+    color: var(--mn-text);
 }
 
-/* 私钥预览（脱敏显示） */
-.mn-privkey-preview {
-    font-size: 0.85em;
-    color: #475569;
-    background: #e2e8f0;
-    padding: 2px 8px;
-    border-radius: 4px;
-    letter-spacing: 0.05em;
+/* ─── JS-used active button marker ───────────────────────── */
+.mn-btn-active {
+    background: var(--mn-primary) !important;
+    color: #fff !important;
+    border-color: var(--mn-primary) !important;
 }
 
-/* 公钥列表 hex 显示 */
-.mn-key-hex {
-    font-size: 0.78em;
-    word-break: break-all;
-    color: #475569;
+/* ─── Responsive table wrapper ──────────────────────────── */
+.mn-table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
+/* ─── Mobile responsive layout ──────────────────────────── */
+@media (max-width: 768px) {
+    /* Stack config status summary */
+    .mn-config-header {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+    /* Shrink terminal/pre blocks */
+    .mn-terminal, .mn-pre {
+        font-size: .75em;
+        max-height: 300px;
+    }
+    /* Tabs wrap */
+    .tabs {
+        flex-wrap: wrap;
+    }
+    .tabs li a {
+        font-size: .85em;
+        padding: 6px 10px;
+    }
+    /* Page action buttons stack */
+    .cbi-page-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    /* Health check items stack */
+    .mn-health-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

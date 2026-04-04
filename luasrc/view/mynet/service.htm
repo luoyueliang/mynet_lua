@@ -1,209 +1,578 @@
 <%+header%>
 <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
 
-<h2><%:Service Management%></h2>
+<h2><%:Operations%></h2>
 
 <%
+local valid_tabs = { status=true, network=true, peers=true, log=true, diagnose=true }
 local tab = active_tab or "status"
-if tab ~= "status" and tab ~= "mynetd" and tab ~= "log" and tab ~= "install" then tab = "status" end
+if not valid_tabs[tab] then tab = "status" end
 local base_url = luci.dispatcher.build_url('admin/services/mynet/service')
+local op_url   = luci.dispatcher.build_url('admin/services/mynet/service/op')
+local api_base = luci.dispatcher.build_url('admin/services/mynet/api')
+
+local function nid_fmt(v)
+    if type(v) == "number" then return string.format("%.0f", v) end
+    return tostring(v or 0)
+end
+
+local function fmt_bytes(n)
+    n = tonumber(n) or 0
+    if n >= 1073741824 then return string.format("%.2f GB", n/1073741824) end
+    if n >= 1048576    then return string.format("%.2f MB", n/1048576) end
+    if n >= 1024       then return string.format("%.2f KB", n/1024) end
+    return tostring(n) .. " B"
+end
+local function lat_str(us)
+    us = tonumber(us) or 0
+    if us <= 0 then return "—" end
+    return string.format("%.1f ms", us / 1000.0)
+end
+local function conn_class(s)
+    if s == "Direct"   then return "mn-running" end
+    if s == "InDirect" then return "mn-warn" end
+    if s == "Local"    then return "mn-muted" end
+    return "mn-stopped"
+end
 %>
 
 <% if op_result then %>
-<div class="mn-alert <%=op_result.ok and 'mn-alert-success' or 'mn-alert-error'%>">
+<div class="alert-message <%=op_result.ok and 'notice' or 'error'%>">
     <%=pcdata(op_result.msg or "")%>
 </div>
 <% end %>
 
-<div class="mn-tabs">
-    <div class="mn-tab-nav">
-        <a class="mn-tab-btn<%=tab=='status' and ' active' or ''%>"  href="<%=base_url%>?tab=status"><%:VPN Service%></a>
-        <a class="mn-tab-btn<%=tab=='mynetd' and ' active' or ''%>" href="<%=base_url%>?tab=mynetd"><%:Monitor Daemon%></a>
-        <a class="mn-tab-btn<%=tab=='log' and ' active' or ''%>"    href="<%=base_url%>?tab=log"><%:Logs%></a>
-        <a class="mn-tab-btn<%=tab=='install' and ' active' or ''%>" href="<%=base_url%>?tab=install"><%:Install%></a>
-    </div>
+<ul class="tabs">
+    <li<%= tab=='status' and ' class="active"' or '' %>><a href="<%=base_url%>?tab=status"><%:GNB Management%></a></li>
+    <li<%= tab=='network' and ' class="active"' or '' %>><a href="<%=base_url%>?tab=network"><%:Network Management%></a></li>
+    <li<%= tab=='peers' and ' class="active"' or '' %>><a href="<%=base_url%>?tab=peers"><%:Link Monitoring%></a></li>
+    <li<%= tab=='log' and ' class="active"' or '' %>><a href="<%=base_url%>?tab=log"><%:Log%></a></li>
+    <li<%= tab=='diagnose' and ' class="active"' or '' %>><a href="<%=base_url%>?tab=diagnose"><%:Diagnostics%></a></li>
+</ul>
 
-    <!-- VPN Service -->
-    <div class="mn-tab-panel<%=tab=='status' and ' active' or ''%>">
-        <div class="mn-card">
-            <div class="mn-card-header"><h3><%:mynet (VPN Service)%></h3></div>
-            <div class="mn-card-body">
-                <div class="mn-service-row">
-                    <span class="mn-service-name">/etc/init.d/mynet</span>
-                    <span class="mn-dot <%=vpn_status=='running' and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
-                    <span class="<%=vpn_status=='running' and 'mn-running' or 'mn-stopped'%>">
-                        <%=pcdata(vpn_status or "unknown")%>
-                    </span>
-                    <% if enable_status then %>
-                    <span class="mn-badge"><%:autostart%> <%=pcdata(enable_status)%></span>
-                    <% end %>
-                    <div class="mn-service-btns">
-                        <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/service/op')%>" style="display:inline">
-                            <input type="hidden" name="service" value="mynet">
-                            <input type="hidden" name="tab"     value="status">
-                            <button name="op" value="start"   class="mn-btn mn-btn-sm mn-btn-green"><%:Start%></button>
-                            <button name="op" value="stop"    class="mn-btn mn-btn-sm mn-btn-red"><%:Stop%></button>
-                            <button name="op" value="restart" class="mn-btn mn-btn-sm mn-btn-yellow"><%:Restart%></button>
-                            <button name="op" value="enable"  class="mn-btn mn-btn-sm mn-btn-secondary"><%:Enable%></button>
-                            <button name="op" value="disable" class="mn-btn mn-btn-sm mn-btn-secondary"><%:Disable%></button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <% if vpn_iface then %>
-        <div class="mn-card" style="margin-top:12px">
-            <div class="mn-card-header"><h3><%:VPN Interface%></h3></div>
-            <div class="mn-card-body">
-                <table class="mn-kv">
-                    <tr><th><%:Interface%></th><td><code><%=pcdata(vpn_iface.interface or "")%></code></td></tr>
-                    <tr><th><%:State%></th><td><%=pcdata(vpn_iface.state or "")%></td></tr>
-                    <% if vpn_iface.mtu then %>
-                    <tr><th>MTU</th><td><%=vpn_iface.mtu%></td></tr>
-                    <% end %>
-                    <% if vpn_iface.flags then %>
-                    <tr><th><%:Flags%></th><td><code><%=pcdata(vpn_iface.flags)%></code></td></tr>
-                    <% end %>
-                </table>
-            </div>
-        </div>
-        <% end %>
-    </div>
-
-    <!-- Monitor Daemon -->
-    <div class="mn-tab-panel<%=tab=='mynetd' and ' active' or ''%>">
-        <div class="mn-card">
-            <div class="mn-card-header"><h3><%:mynetd (Monitor Daemon)%></h3></div>
-            <div class="mn-card-body">
-                <div class="mn-service-row">
-                    <span class="mn-service-name">mynetd</span>
-                    <span class="mn-dot <%=mynetd_status=='running' and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
-                    <span class="<%=mynetd_status=='running' and 'mn-running' or 'mn-stopped'%>">
-                        <%=pcdata(mynetd_status or "unknown")%>
-                    </span>
-                    <% if mynetd_pid and mynetd_pid ~= "" then %>
-                    <span class="mn-badge">PID <%=pcdata(mynetd_pid)%></span>
-                    <% end %>
-                    <div class="mn-service-btns">
-                        <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/service/op')%>" style="display:inline">
-                            <input type="hidden" name="service" value="mynetd">
-                            <input type="hidden" name="tab"     value="mynetd">
-                            <button name="op" value="start"   class="mn-btn mn-btn-sm mn-btn-green"><%:Start%></button>
-                            <button name="op" value="stop"    class="mn-btn mn-btn-sm mn-btn-red"><%:Stop%></button>
-                            <button name="op" value="restart" class="mn-btn mn-btn-sm mn-btn-yellow"><%:Restart%></button>
-                        </form>
-                    </div>
-                </div>
-                <table class="mn-kv" style="margin-top:10px">
-                    <tr><th><%:Binary%></th><td><code><%=pcdata(mynetd_bin or "")%></code></td></tr>
-                    <tr><th><%:Heartbeat%></th><td><%=pcdata(tostring(heartbeat_interval or 300))%> s</td></tr>
-                    <tr><th><%:Log Level%></th><td><%=pcdata(log_level or "info")%></td></tr>
-                    <tr><th><%:Config%></th><td><a href="<%=luci.dispatcher.build_url('admin/services/mynet/settings')%>"><%:Edit in Settings%></a></td></tr>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <!-- Logs -->
-    <div class="mn-tab-panel<%=tab=='log' and ' active' or ''%>">
-        <div class="mn-section-header" style="margin-bottom:8px">
-            <h3><%:Recent Log%> <span class="mn-muted mn-small">(<%=pcdata(log_path or "")%>)</span></h3>
-            <a href="<%=base_url%>?tab=log" class="mn-btn mn-btn-sm mn-btn-secondary">&#8635; <%:Refresh%></a>
-        </div>
-        <% if log_content and log_content ~= "" then %>
-        <pre class="mn-pre"><%=pcdata(log_content)%></pre>
-        <% else %>
-        <div class="mn-alert mn-alert-info"><%:No log content available.%></div>
-        <% end %>
-    </div>
-
-    <!-- Install -->
-    <div class="mn-tab-panel<%=tab=='install' and ' active' or ''%>">
-        <%
-        local ist = install_status or {}
-        local op_url = luci.dispatcher.build_url('admin/services/mynet/service/op')
-        local function status_badge(ok)
-            if ok then
-                return '<span class="mn-badge mn-badge-green">&#10003; installed</span>'
-            else
-                return '<span class="mn-badge mn-badge-gray">&#8212; missing</span>'
-            end
-        end
-        %>
-
-        <!-- mynetd init.d script -->
-        <div class="mn-card">
-            <div class="mn-card-header"><h3><%:/etc/init.d/mynetd%></h3></div>
-            <div class="mn-card-body">
-                <table class="mn-kv">
-                    <tr><th><%:File%></th>
-                        <td><code>/etc/init.d/mynetd</code>
-                        <%=status_badge(ist.mynetd_initd)%></td></tr>
-                    <tr><th><%:Autostart%></th>
-                        <td><%=ist.mynetd_enabled and '<span class="mn-running">enabled</span>' or '<span class="mn-stopped">disabled</span>'%></td></tr>
-                </table>
-                <div class="mn-service-btns" style="margin-top:10px">
-                    <form method="post" action="<%=op_url%>" style="display:inline">
-                        <input type="hidden" name="service" value="install">
-                        <input type="hidden" name="tab"     value="install">
-                        <button name="op" value="install_mynetd"   class="mn-btn mn-btn-sm mn-btn-green"><%:Install%></button>
-                        <button name="op" value="uninstall_mynetd" class="mn-btn mn-btn-sm mn-btn-red"><%:Uninstall%></button>
-                        <button name="op" value="enable_mynetd"    class="mn-btn mn-btn-sm mn-btn-secondary"><%:Enable%></button>
-                        <button name="op" value="disable_mynetd"   class="mn-btn mn-btn-sm mn-btn-secondary"><%:Disable%></button>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <!-- Firewall script -->
-        <div class="mn-card" style="margin-top:12px">
-            <div class="mn-card-header"><h3><%:Firewall Script%></h3></div>
-            <div class="mn-card-body">
-                <table class="mn-kv">
-                    <tr><th><%:File%></th>
-                        <td><code>/etc/mynet/scripts/firewall.mynet</code>
-                        <%=status_badge(ist.fw_script)%></td></tr>
-                    <tr><th><%:/etc/config/firewall include%></th>
-                        <td><%=ist.fw_config_ok and '<span class="mn-running">present</span>' or '<span class="mn-stopped">not found</span>'%></td></tr>
-                </table>
-                <div class="mn-service-btns" style="margin-top:10px">
-                    <form method="post" action="<%=op_url%>" style="display:inline">
-                        <input type="hidden" name="service" value="install">
-                        <input type="hidden" name="tab"     value="install">
-                        <button name="op" value="install_fw_script"   class="mn-btn mn-btn-sm mn-btn-green"><%:Install%></button>
-                        <button name="op" value="uninstall_fw_script" class="mn-btn mn-btn-sm mn-btn-red"><%:Uninstall%></button>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <!-- Route script -->
-        <div class="mn-card" style="margin-top:12px">
-            <div class="mn-card-header"><h3><%:Route Script%></h3></div>
-            <div class="mn-card-body">
-                <table class="mn-kv">
-                    <tr><th><%:File%></th>
-                        <td><code>/etc/mynet/scripts/route.mynet</code>
-                        <%=status_badge(ist.route_script)%></td></tr>
-                </table>
-                <div class="mn-service-btns" style="margin-top:10px">
-                    <form method="post" action="<%=op_url%>" style="display:inline">
-                        <input type="hidden" name="service" value="install">
-                        <input type="hidden" name="tab"     value="install">
-                        <button name="op" value="install_route_script"   class="mn-btn mn-btn-sm mn-btn-green"><%:Install%></button>
-                        <button name="op" value="uninstall_route_script" class="mn-btn mn-btn-sm mn-btn-red"><%:Uninstall%></button>
-                    </form>
-                </div>
-            </div>
-        </div>
+<% if tab == 'status' then %>
+<!-- ══════ GNB Service ══════ -->
+<div class="cbi-section">
+    <h3><%:mynet (GNB Service)%></h3>
+    <%
+    local is_enabled = enable_status and enable_status:find("enabled")
+    %>
+    <table class="table">
+        <tr class="tr">
+            <th class="th" style="width:10em"><%:Init Script%></th>
+            <td class="td"><code>/etc/init.d/mynet</code></td>
+        </tr>
+        <tr class="tr">
+            <th class="th"><%:Status%></th>
+            <td class="td">
+                <span class="mn-dot <%=vpn_status=='running' and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
+                <strong class="<%=vpn_status=='running' and 'mn-running' or 'mn-stopped'%>"><%=pcdata(vpn_status or "unknown")%></strong>
+            </td>
+        </tr>
+        <tr class="tr">
+            <th class="th"><%:Boot Autostart%></th>
+            <td class="td">
+                <label style="cursor:pointer">
+                    <input type="checkbox" id="mn-chk-autostart" <%=is_enabled and 'checked' or ''%>
+                        onchange="mnSvcAutostart(this, 'initd')">
+                    <%=is_enabled and 'Enabled' or 'Disabled'%>
+                </label>
+            </td>
+        </tr>
+    </table>
+    <div class="cbi-page-actions">
+        <button onclick="mnSvcOp({service:'mynet',op:'start',tab:'status'},this)" class="cbi-button cbi-button-apply"><%:Start%></button>
+        <button onclick="mnSvcOp({service:'mynet',op:'stop',tab:'status'},this)" class="cbi-button cbi-button-remove"><%:Stop%></button>
+        <button onclick="mnSvcOp({service:'mynet',op:'restart',tab:'status'},this)" class="cbi-button cbi-button-action"><%:Restart%></button>
     </div>
 </div>
 
-<div class="mn-actions-bar">
-    <a href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>" class="mn-btn mn-btn-secondary">
+<% if vpn_iface then %>
+<div class="cbi-section">
+    <h3><%:GNB Interface%></h3>
+    <table class="table" style="width:100%">
+        <tr class="tr"><th class="th" style="width:10em"><%:Interface%></th><td class="td"><code><%=pcdata(vpn_iface.interface or "")%></code></td></tr>
+        <tr class="tr"><th class="th"><%:State%></th><td class="td"><%=pcdata(vpn_iface.state or "")%></td></tr>
+        <% if vpn_iface.mtu then %>
+        <tr class="tr"><th class="th">MTU</th><td class="td"><%=vpn_iface.mtu%></td></tr>
+        <% end %>
+        <% if vpn_iface.flags then %>
+        <tr class="tr"><th class="th"><%:Flags%></th><td class="td"><code><%=pcdata(vpn_iface.flags)%></code></td></tr>
+        <% end %>
+    </table>
+</div>
+<% end %>
+
+<% elseif tab == 'peers' then %>
+<!-- ══════ GNB Peers ══════ -->
+<% if gnb_err then %>
+    <div class="alert-message warning"><strong>Error:</strong> <%=pcdata(gnb_err)%></div>
+<% elseif not gnb_nodes or #gnb_nodes == 0 then %>
+    <div class="alert-message warning"><%:No GNB peers found. Make sure GNB is running and gnb_ctl is available.%></div>
+<% else %>
+    <p class="mn-muted mn-small" style="margin-bottom:8px">
+        <%:Total nodes:%> <strong><%=#gnb_nodes%></strong>
+        &nbsp;·&nbsp;
+        <%:Last refresh:%> <span id="gnb-last-ts"><%=tostring(gnb_ts or "")%></span>
+        &nbsp;·&nbsp;
+        <span id="gnb-next-refresh"></span>
+    </p>
+    <div class="cbi-section" style="overflow-x:auto">
+    <table class="table" style="width:100%;font-size:.85em">
+        <thead>
+            <tr class="tr">
+                <th class="th"><%:Node ID%></th>
+                <th class="th"><%:Tun IPv4%></th>
+                <th class="th"><%:Tun IPv6%></th>
+                <th class="th"><%:WAN (IPv4:Port)%></th>
+                <th class="th"><%:WAN IPv6%></th>
+                <th class="th"><%:Latency%></th>
+                <th class="th"><%:Conn%></th>
+                <th class="th"><%:Rx%></th>
+                <th class="th"><%:Tx%></th>
+                <th class="th"><%:Addrs%></th>
+                <th class="th"><%:Detect%></th>
+            </tr>
+        </thead>
+        <tbody id="gnb-tbody">
+        <% for _, n in ipairs(gnb_nodes) do %>
+            <tr class="tr <%=n.is_local and 'mn-gnb-local' or ''%>">
+                <td class="td"><code><%= n.node_id and string.format("%.0f", n.node_id) or "?" %></code>
+                    <%=n.is_local and '<span class="mn-badge-local">[local]</span>' or ''%>
+                </td>
+                <td class="td"><code><%=pcdata(n.tun_ipv4 ~= "" and n.tun_ipv4 or "—")%></code></td>
+                <td class="td"><code class="mn-muted"><%=pcdata(n.tun_ipv6 ~= "" and n.tun_ipv6 or "—")%></code></td>
+                <td class="td"><code><%=pcdata(n.wan_ipv4 ~= "" and n.wan_ipv4 ~= "0.0.0.0:0" and n.wan_ipv4 or "—")%></code></td>
+                <td class="td"><code class="mn-muted"><%=pcdata(n.wan_ipv6 ~= "" and n.wan_ipv6 or "—")%></code></td>
+                <td class="td <%=lat_str(n.ipv4_latency) ~= '—' and 'mn-running' or 'mn-muted'%>">
+                    <%=lat_str(n.ipv4_latency ~= 0 and n.ipv4_latency or n.ipv6_latency)%>
+                </td>
+                <td class="td"><span class="<%=conn_class(n.conn_status)%>"><%=pcdata(n.conn_status or "unknown")%></span></td>
+                <td class="td mn-muted"><small><%=fmt_bytes(n.in_bytes)%></small></td>
+                <td class="td mn-muted"><small><%=fmt_bytes(n.out_bytes)%></small></td>
+                <td class="td"><%=tostring(n.avail_addrs or 0)%></td>
+                <td class="td"><%=n.detect_count > 0 and ('<span class="mn-warn">'.. tostring(n.detect_count) ..'</span>') or '0'%></td>
+            </tr>
+        <% end %>
+        </tbody>
+    </table>
+    </div>
+<% end %>
+
+<div style="margin-top:12px;display:flex;gap:6px">
+    <a class="cbi-button" href="<%=base_url%>?tab=peers"><%:Refresh%></a>
+    <button class="cbi-button cbi-button-action" id="gnb-auto-toggle" onclick="mnGNBToggleAuto(this)"><%:Auto (60s)%></button>
+</div>
+
+<% if gnb_raw and gnb_raw ~= "" then %>
+<div class="cbi-section" style="margin-top:12px">
+    <h3><%:Raw Output%></h3>
+    <pre class="mn-pre" style="margin:0 1.25rem 1rem"><%=pcdata(gnb_raw)%></pre>
+</div>
+<% end %>
+
+<% elseif tab == 'network' then %>
+<!-- ══════ Network (Route + NAT) ══════ -->
+
+<!-- route.conf -->
+<div class="cbi-section">
+    <h3><%:route.conf%> <span class="mn-muted mn-small">(/etc/mynet/conf/route.conf)</span></h3>
+    <div class="mn-section-body">
+<% if route_conf and route_conf ~= "" then %>
+        <pre class="mn-pre"><%=pcdata(route_conf)%></pre>
+<% else %>
+        <p class="mn-muted"><%:No route.conf found. Refresh node config from Node page.%></p>
+<% end %>
+    </div>
+    <div class="cbi-page-actions">
+        <button onclick="mnSvcOp({service:'network',op:'reload_route',tab:'network'},this)" class="cbi-button cbi-button-action">&#8635; <%:Apply route.sh%></button>
+    </div>
+</div>
+
+<!-- Kernel Routing Table -->
+<div class="cbi-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:.8rem 1.25rem">
+        <h3 style="margin:0;padding:0"><%:Kernel Routing Table%></h3>
+        <a href="<%=base_url%>?tab=network" class="cbi-button">&#8635;</a>
+    </div>
+    <div class="mn-section-body">
+<% if ip_route and ip_route ~= "" then %>
+        <pre class="mn-pre"><%=pcdata(ip_route)%></pre>
+<% else %>
+        <p class="mn-muted"><%:Unable to read routing table.%></p>
+<% end %>
+    </div>
+</div>
+
+<!-- NAT Settings -->
+<div class="cbi-section">
+    <h3><%:Firewall Zone%></h3>
+    <table class="table">
+        <tr class="tr">
+            <th class="th" style="width:10em"><%:Zone Status%></th>
+            <td class="td">
+                <% if fw_info and fw_info.mynet_zone_exists then %>
+                <span class="mn-dep-ok">mynet zone ✓</span>
+                <% else %>
+                <span class="mn-dep-fail">mynet zone ✗</span>
+                <% end %>
+                &nbsp;
+                <% if fw_info and fw_info.mynet_masq then %>
+                <span class="mn-dep-ok">masq ✓</span>
+                <% else %>
+                <span class="mn-dep-fail">masq ✗</span>
+                <% end %>
+            </td>
+        </tr>
+        <tr class="tr">
+            <th class="th"><%:Forwarding%></th>
+            <td class="td">
+                <% if fw_info and #(fw_info.forwards or {}) > 0 then %>
+                    <% for _, fwd in ipairs(fw_info.forwards) do %>
+                    <code class="mn-fw-rule"><%=pcdata(fwd.src .. " → " .. fwd.dest)%></code>&nbsp;
+                    <% end %>
+                <% else %>
+                    <span class="mn-muted"><%:No forwarding rules configured%></span>
+                <% end %>
+            </td>
+        </tr>
+    </table>
+    <div class="cbi-page-actions">
+        <% if not fw_info or not fw_info.mynet_zone_exists then %>
+        <button onclick="mnSvcOp({service:'network',op:'fw_setup',tab:'network'},this)" class="cbi-button cbi-button-apply">&#9889; <%:Setup Firewall Zone%></button>
+        <% else %>
+        <button onclick="mnSvcOp({service:'network',op:'fw_apply_masq',tab:'network'},this)" class="cbi-button cbi-button-action">&#8635; <%:Re-apply Masq%></button>
+        <button onclick="if(confirm('确认移除 mynet 防火墙区域？VPN 流量转发将停止工作。'))mnSvcOp({service:'network',op:'fw_teardown',tab:'network'},this)" class="cbi-button cbi-button-remove"><%:Remove Firewall Zone%></button>
+        <% end %>
+    </div>
+</div>
+
+<!-- NAT Settings -->
+<div class="cbi-section">
+    <h3><%:NAT Settings%></h3>
+    <div style="padding:0 1.25rem 1rem;display:flex;flex-direction:column;gap:12px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" <%=nat_outbound and 'checked' or ''%>
+                onchange="mnToggleNat('outbound', this.checked)">
+            <span><%:Enable Outbound NAT%></span>
+            <span class="mn-muted mn-small">(mynet zone masquerade)</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" <%=nat_inbound and 'checked' or ''%>
+                onchange="mnToggleNat('inbound', this.checked)">
+            <span><%:Enable Inbound NAT%></span>
+            <span class="mn-muted mn-small">(mynet → lan forwarding)</span>
+        </label>
+    </div>
+    <div class="cbi-page-actions">
+        <button onclick="mnSvcOp({service:'network',op:'reload_fw',tab:'network'},this)" class="cbi-button cbi-button-action">&#8635; <%:Apply firewall.sh%></button>
+        <button onclick="mnSvcOp({service:'network',op:'reload_fw_commit',tab:'network'},this)" class="cbi-button"><%:fw reload (uci commit)%></button>
+    </div>
+</div>
+
+<% elseif tab == 'log' then %>
+<!-- ══════ Log ══════ -->
+<%
+local lines = log_lines or 200
+%>
+<div class="cbi-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:.8rem 1.25rem">
+        <h3 style="margin:0;padding:0"><%:Recent Log%> <span class="mn-muted mn-small">(<%=pcdata(log_path or "")%>)</span></h3>
+        <div style="display:flex;gap:6px;align-items:center">
+            <select id="mn-log-lines" class="cbi-input-select" style="width:auto" onchange="location.href='<%=base_url%>?tab=log&lines='+this.value">
+                <option value="100" <%=lines==100 and 'selected' or ''%>>100</option>
+                <option value="200" <%=lines==200 and 'selected' or ''%>>200</option>
+                <option value="500" <%=lines==500 and 'selected' or ''%>>500</option>
+                <option value="1000" <%=lines==1000 and 'selected' or ''%>>1000</option>
+            </select>
+            <span class="mn-muted mn-small"><%:lines%></span>
+            <a href="<%=base_url%>?tab=log&lines=<%=lines%>" class="cbi-button">&#8635; <%:Refresh%></a>
+            <button id="mn-log-auto-btn" class="cbi-button cbi-button-action" onclick="mnLogToggleAuto(this)"><%:Auto (30s)%></button>
+        </div>
+    </div>
+    <div class="mn-section-body">
+        <% if log_content and log_content ~= "" then %>
+        <pre id="mn-log-content" class="mn-terminal" style="max-height:600px"><%=pcdata(log_content)%></pre>
+        <% else %>
+        <div class="alert-message notice"><%:No log content available.%></div>
+        <% end %>
+    </div>
+</div>
+
+<% elseif tab == 'diagnose' then %>
+<!-- ══════ Diagnostics ══════ -->
+<%
+local cur_nid_str = nid_fmt(diag_node_id)
+%>
+<div class="cbi-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:.8rem 1.25rem">
+        <h3 style="margin:0;padding:0"><%:System Check%></h3>
+        <button class="cbi-button cbi-button-apply" id="mn-diag-btn" onclick="mnRunDiagnose()">&#9654; <%:Run Diagnostics%></button>
+    </div>
+    <p class="mn-muted mn-small" style="padding:0 1.25rem">
+        <%:Checks file integrity, runtime status and GNB logs for node%> <code>#<%=cur_nid_str%></code>
+    </p>
+
+    <!-- 结果表 -->
+    <div id="mn-diag-result" style="display:none;padding:0 1.25rem">
+        <table class="table" id="mn-diag-table" style="width:100%">
+            <thead>
+                <tr class="tr">
+                    <th class="th" style="width:50%"><%:Check Item%></th>
+                    <th class="th" style="width:15%"><%:Result%></th>
+                    <th class="th"><%:Detail%></th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <!-- GNB 日志 -->
+    <div id="mn-diag-log-section" style="display:none;padding:0 1.25rem 1rem">
+        <h4><%:GNB Log (last 30 lines)%></h4>
+        <pre id="mn-diag-log" class="mn-terminal"></pre>
+    </div>
+</div>
+
+<% end %> <!-- tab -->
+
+<div class="cbi-page-actions">
+    <a href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>" class="cbi-button">
         &#8592; <%:Dashboard%>
     </a>
 </div>
+
+<div id="mn-toast" class="mn-toast mn-hidden"></div>
+<script src="<%=resource%>/mynet/js/mynet.js"></script>
+<script>
+(function(){
+    var opUrl = '<%=op_url%>';
+
+    /* 通用 AJAX 操作：发送到 action_service_op，返回 JSON */
+    window.mnSvcOp = function(params, btn) {
+        if (btn) btn.disabled = true;
+        params._ajax = '1';
+        mnFetch(opUrl, 'POST', params,
+            function(data) {
+                if (btn) btn.disabled = false;
+                mnShowToast(data.message || data.error || 'ok', data.success ? '' : 'error');
+                /* 状态类操作 1.5s 后刷新页面以更新面板数据 */
+                setTimeout(function(){ location.reload(); }, 1500);
+            },
+            function(err) {
+                if (btn) btn.disabled = false;
+                mnShowToast(err, 'error');
+            }
+        );
+    };
+
+    window.mnSvcAutostart = function(cb, type) {
+        var op = cb.checked ? 'initd_enable' : 'initd_disable';
+        mnSvcOp({service:'network', op:op, tab:'status'}, null);
+    };
+
+    window.mnToggleNat = function(natType, enabled) {
+        mnSvcOp({service:'network', op:'set_nat', tab:'network', nat_type:natType, value:enabled?'1':'0'}, null);
+    };
+})();
+</script>
+<% if tab == "peers" then %>
+<script>
+(function () {
+    var _autoTimer = null;
+    var _enabled   = false;
+    var _countdown = 60;
+
+    window.mnGNBToggleAuto = function (btn) {
+        _enabled = !_enabled;
+        btn.textContent = _enabled ? 'Auto ON (60s)' : '<%:Auto (60s)%>';
+        if (_enabled) {
+            _countdown = 60;
+            _startCountdown();
+        } else {
+            clearInterval(_autoTimer);
+            document.getElementById('gnb-next-refresh').textContent = '';
+        }
+    };
+
+    function _startCountdown() {
+        clearInterval(_autoTimer);
+        _autoTimer = setInterval(function () {
+            _countdown--;
+            var el = document.getElementById('gnb-next-refresh');
+            if (el) el.textContent = 'next refresh in ' + _countdown + 's';
+            if (_countdown <= 0) {
+                clearInterval(_autoTimer);
+                _doRefresh();
+            }
+        }, 1000);
+    }
+
+    function _doRefresh() {
+        var base = _mnApiBase() + 'gnb_nodes';
+        fetch(base, { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (!data.success) return;
+                _renderTable(data.nodes || []);
+                if (document.getElementById('gnb-last-ts')) {
+                    document.getElementById('gnb-last-ts').textContent = new Date().toLocaleTimeString();
+                }
+                if (_enabled) {
+                    _countdown = 60;
+                    _startCountdown();
+                }
+            })
+            .catch(function (err) { mnShowToast(String(err), 'error'); });
+    }
+
+    function _fmtBytes(n) {
+        if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB';
+        if (n >= 1048576)    return (n / 1048576).toFixed(2) + ' MB';
+        if (n >= 1024)       return (n / 1024).toFixed(2) + ' KB';
+        return n + ' B';
+    }
+    function _connClass(s) {
+        if (s === 'Direct')   return 'mn-running';
+        if (s === 'InDirect') return 'mn-warn';
+        if (s === 'Local')    return 'mn-muted';
+        return 'mn-stopped';
+    }
+
+    function _renderTable(nodes) {
+        var tbody = document.getElementById('gnb-tbody');
+        if (!tbody) return;
+        var html = '';
+        nodes.forEach(function (n) {
+            var lat  = n.latency_ms ? n.latency_ms + ' ms' : '—';
+            var latCls = n.latency_ms ? 'mn-running' : 'mn-muted';
+            var localBadge = n.is_local ? '<span class="mn-badge-local">[local]</span>' : '';
+            html += '<tr class="tr ' + (n.is_local ? 'mn-gnb-local' : '') + '">'
+                + '<td class="td"><code>' + (n.node_id || '?') + '</code>' + localBadge + '</td>'
+                + '<td class="td"><code>' + (n.tun_ipv4 || '—') + '</code></td>'
+                + '<td class="td"><code class="mn-muted">' + (n.tun_ipv6 || '—') + '</code></td>'
+                + '<td class="td"><code>' + (n.wan_ipv4 && n.wan_ipv4 !== '0.0.0.0:0' ? n.wan_ipv4 : '—') + '</code></td>'
+                + '<td class="td"><code class="mn-muted">' + (n.wan_ipv6 || '—') + '</code></td>'
+                + '<td class="td ' + latCls + '">' + lat + '</td>'
+                + '<td class="td"><span class="' + _connClass(n.conn_status) + '">' + (n.conn_status || 'unknown') + '</span></td>'
+                + '<td class="td mn-muted"><small>' + _fmtBytes(n.in_bytes || 0) + '</small></td>'
+                + '<td class="td mn-muted"><small>' + _fmtBytes(n.out_bytes || 0) + '</small></td>'
+                + '<td class="td">' + (n.avail_addrs || 0) + '</td>'
+                + '<td class="td">' + (n.detect_count > 0 ? '<span class="mn-warn">' + n.detect_count + '</span>' : '0') + '</td>'
+                + '</tr>';
+        });
+        tbody.innerHTML = html || '<tr class="tr"><td class="td mn-muted" colspan="11">No peers</td></tr>';
+    }
+}());
+</script>
+<% end %>
+
+<% if tab == "log" then %>
+<script>
+(function(){
+    var _autoTimer = null;
+    var _enabled = false;
+    var _countdown = 30;
+    var base = '<%=api_base%>/';
+
+    window.mnLogToggleAuto = function(btn) {
+        _enabled = !_enabled;
+        btn.textContent = _enabled ? 'Auto ON (30s)' : '<%:Auto (30s)%>';
+        if (_enabled) {
+            _countdown = 30;
+            _startCountdown();
+        } else {
+            clearInterval(_autoTimer);
+        }
+    };
+
+    function _startCountdown() {
+        clearInterval(_autoTimer);
+        _autoTimer = setInterval(function(){
+            _countdown--;
+            if (_countdown <= 0) {
+                clearInterval(_autoTimer);
+                _doRefresh();
+            }
+        }, 1000);
+    }
+
+    function _doRefresh() {
+        var lines = document.getElementById('mn-log-lines').value || 200;
+        fetch(base + 'logs_tail', {
+            method: 'POST',
+            headers: {'Content-Type':'application/x-www-form-urlencoded'},
+            body: 'lines=' + lines
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if (data.log !== undefined) {
+                var el = document.getElementById('mn-log-content');
+                if (el) {
+                    el.textContent = data.log || '(empty)';
+                    el.scrollTop = el.scrollHeight;
+                }
+            }
+            if (_enabled) {
+                _countdown = 30;
+                _startCountdown();
+            }
+        })
+        .catch(function(err){ console.error('log refresh:', err); });
+    }
+
+    // Scroll to bottom on load
+    var logEl = document.getElementById('mn-log-content');
+    if (logEl) logEl.scrollTop = logEl.scrollHeight;
+})();
+</script>
+<% end %>
+
+<% if tab == "diagnose" then %>
+<script>
+window.mnCurrentNodeId = "<%=nid_fmt(diag_node_id)%>";
+
+window.mnRunDiagnose = function() {
+    var btn = document.getElementById('mn-diag-btn');
+    if (btn) btn.disabled = true;
+    var resultDiv = document.getElementById('mn-diag-result');
+    var logSection = document.getElementById('mn-diag-log-section');
+    var tbody = document.querySelector('#mn-diag-table tbody');
+    var logPre = document.getElementById('mn-diag-log');
+
+    var base = _mnApiBase();
+    fetch(base + 'diagnose', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if (btn) btn.disabled = false;
+            if (!data.success) {
+                mnShowToast(data.error || 'Diagnose failed', 'error');
+                return;
+            }
+            // Render check items
+            var checks = data.checks || [];
+            var html = '';
+            checks.forEach(function(c){
+                var cls = c.ok ? 'mn-dep-ok' : 'mn-dep-fail';
+                html += '<tr class="tr"><td class="td">' + (c.label||'') + '</td>'
+                    + '<td class="td"><span class="' + cls + '">' + (c.ok ? '✓ OK' : '✗ FAIL') + '</span></td>'
+                    + '<td class="td"><small>' + (c.detail||'') + '</small></td></tr>';
+            });
+            if (tbody) tbody.innerHTML = html || '<tr class="tr"><td class="td mn-muted" colspan=3>No checks</td></tr>';
+            if (resultDiv) resultDiv.style.display = '';
+
+            // GNB log
+            if (data.gnb_log && data.gnb_log !== '') {
+                if (logPre) logPre.textContent = data.gnb_log;
+                if (logSection) logSection.style.display = '';
+            }
+        })
+        .catch(function(err){
+            if (btn) btn.disabled = false;
+            mnShowToast(String(err), 'error');
+        });
+};
+</script>
+<% end %>
 
 <%+footer%>

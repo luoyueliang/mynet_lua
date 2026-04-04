@@ -1,143 +1,80 @@
 <%+header%>
-    <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
 
-    <h2>
-        <%:Settings%>
-    </h2>
+<h2><%:Settings%></h2>
 
-    <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/settings/save')%>"
-        class="mn-form mn-form-wide">
+<form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/settings/save')%>">
 
-        <h3><%:API Server%></h3>
+    <div class="cbi-section">
+        <h3><%:GNB Binary%></h3>
+        <table class="table" style="width:100%">
+            <tr class="tr">
+                <th class="th" style="width:10em"><%:Select%></th>
+                <td class="td">
+                    <label style="display:inline-flex;align-items:center;gap:6px;margin-right:20px;cursor:pointer">
+                        <input type="radio" name="use_system_gnb" value="0"
+                            <% if not use_system_gnb then %> checked<% end %>>
+                        <%:Bundled GNB%>
+                    </label>
+                    <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                        <input type="radio" name="use_system_gnb" value="1"
+                            <% if use_system_gnb then %> checked<% end %>>
+                        <%:System GNB%>
+                    </label>
+                </td>
+            </tr>
+            <tr class="tr">
+                <th class="th"><%:Bundled GNB%></th>
+                <td class="td">
+                    <code><%=pcdata(gnb_bin_path or "—")%></code>
+                    <% if bundled_gnb_exists then %>
+                    <span class="mn-badge mn-badge-ok">✓</span>
+                    <% if bundled_gnb_version and bundled_gnb_version ~= "" then %>&nbsp;<span class="mn-muted mn-small"><%=pcdata(bundled_gnb_version)%></span><% end %>
+                    <% else %>
+                    <span class="mn-badge mn-badge-warn"><%:not found%></span>
+                    <% end %>
+                    <% if not use_system_gnb then %>&nbsp;<span class="mn-badge"><%:active%></span><% end %>
+                </td>
+            </tr>
+            <tr class="tr">
+                <th class="th"><%:System GNB%></th>
+                <td class="td">
+                    <code><%=pcdata(system_gnb_path or "—")%></code>
+                    <% if system_gnb_exists then %>
+                    <span class="mn-badge mn-badge-ok">✓</span>
+                    <% if system_gnb_version and system_gnb_version ~= "" then %>&nbsp;<span class="mn-muted mn-small"><%=pcdata(system_gnb_version)%></span><% end %>
+                    <% else %>
+                    <span class="mn-badge mn-badge-warn"><%:not found%></span>
+                    <% end %>
+                    <% if use_system_gnb then %>&nbsp;<span class="mn-badge"><%:active%></span><% end %>
+                </td>
+            </tr>
+        </table>
+    </div>
 
-        <div class="mn-form-group">
-            <label for="api_url"><%:API Server URL%></label>
-            <input type="url" id="api_url" name="api_url" value="<%=pcdata(api_url or '')%>"
-                placeholder="https://api.mynet.club/api/v1" required>
-            <p class="mn-hint mn-small mn-muted">
-                <%:Base URL of the MyNet API server, e.g.%> <code>https://api.mynet.club/api/v1</code>
-            </p>
-        </div>
+    <div class="cbi-page-actions">
+        <button type="submit" class="cbi-button cbi-button-save"><%:Save%></button>
+        <a class="cbi-button" href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>">
+            <%:Cancel%>
+        </a>
+    </div>
 
-        <hr class="mn-divider">
-        <h3><%:GNB Driver%></h3>
+</form>
 
-        <div class="mn-form-group">
-            <label for="gnb_root"><%:GNB Root Directory%></label>
-            <input type="text" id="gnb_root" name="gnb_root" value="<%=pcdata(gnb_root or '')%>"
-                placeholder="/etc/mynet/driver/gnb">
-            <p class="mn-hint mn-small mn-muted">
-                <%:Base directory containing gnb bin/ and conf/ subdirs, e.g.%>
-                <code>/etc/mynet/driver/gnb</code>
-            </p>
-        </div>
+<div id="mn-toast" class="mn-toast mn-hidden"></div>
 
-        <div class="mn-form-group">
-            <label for="gnb_bin_path"><%:Bundled GNB Binary%></label>
-            <input type="text" id="gnb_bin_path" name="gnb_bin_path" value="<%=pcdata(gnb_bin_path or '')%>"
-                placeholder="/etc/mynet/driver/gnb/bin/gnb">
-            <p class="mn-hint mn-small mn-muted">
-                <%:Path to the self-managed gnb binary shipped with mynet.%>
-            </p>
-        </div>
+<div class="cbi-section">
+    <h3><%:About%></h3>
+    <table class="table" style="width:100%">
+        <tr class="tr">
+            <th class="th" style="width:10em"><%:Version%></th>
+            <td class="td"><code><%=pcdata(app_version or "—")%></code></td>
+        </tr>
+        <tr class="tr">
+            <th class="th"><%:Home Path%></th>
+            <td class="td"><code><%=pcdata(mynet_home or "—")%></code></td>
+        </tr>
+    </table>
+</div>
 
-        <div class="mn-form-group">
-            <label for="system_gnb_path"><%:System GNB Binary%></label>
-            <input type="text" id="system_gnb_path" name="system_gnb_path" value="<%=pcdata(system_gnb_path or '')%>"
-                placeholder="/usr/sbin/gnb">
-            <p class="mn-hint mn-small mn-muted">
-                <%:Path to the system-installed gnb binary, e.g. installed via opkg.%>
-            </p>
-        </div>
-
-        <div class="mn-form-group">
-            <label class="mn-label-inline">
-                <input type="checkbox" name="use_system_gnb" value="1"
-                    <% if use_system_gnb then %> checked<% end %> >
-                <%:Use system GNB (instead of bundled)%>
-            </label>
-            <p class="mn-hint mn-small mn-muted">
-                <%:When checked, the system gnb binary path is used. Uncheck to use the bundled binary.%>
-            </p>
-        </div>
-
-        <hr class="mn-divider">
-        <h3><%:Monitor Daemon (mynetd)%></h3>
-
-        <div class="mn-form-group">
-            <label for="mynetd_bin_path"><%:mynetd Binary Path%></label>
-            <input type="text" id="mynetd_bin_path" name="mynetd_bin_path"
-                value="<%=pcdata(mynetd_bin_path or '')%>"
-                placeholder="/usr/bin/mynetd">
-            <p class="mn-hint mn-small mn-muted">
-                <%:Full path to the mynetd daemon binary.%>
-            </p>
-        </div>
-
-        <div class="mn-form-group">
-            <label for="heartbeat_interval"><%:Heartbeat Interval (seconds)%></label>
-            <input type="number" id="heartbeat_interval" name="heartbeat_interval"
-                value="<%=pcdata(tostring(heartbeat_interval or 300))%>"
-                min="10" max="3600" step="10">
-            <p class="mn-hint mn-small mn-muted">
-                <%:How often mynetd sends a heartbeat to the server (10–3600 s, default 300).%>
-            </p>
-        </div>
-
-        <div class="mn-form-group">
-            <label for="log_level"><%:Log Level%></label>
-            <select id="log_level" name="log_level">
-<%
-local levels = {"debug","info","warn","error"}
-for _, lv in ipairs(levels) do
-%>
-                <option value="<%=lv%>"<% if log_level == lv then %> selected<% end %>><%=lv%></option>
-<%
-end
-%>
-            </select>
-            <p class="mn-hint mn-small mn-muted">
-                <%:Verbosity of mynetd log output.%>
-            </p>
-        </div>
-
-        <div class="mn-form-group">
-            <label class="mn-label-inline">
-                <input type="checkbox" name="daemon_mode" value="1"
-                    <% if daemon_mode then %> checked<% end %> >
-                <%:Run as daemon (background process)%>
-            </label>
-        </div>
-
-        <div class="mn-form-group">
-            <label class="mn-label-inline">
-                <input type="checkbox" name="auto_refresh_nodes" value="1"
-                    <% if auto_refresh_nodes then %> checked<% end %> >
-                <%:Auto-refresh node configs after heartbeat%>
-            </label>
-            <p class="mn-hint mn-small mn-muted">
-                <%:When enabled, mynetd will re-download node configs each heartbeat cycle.%>
-            </p>
-        </div>
-
-        <div class="mn-form-actions">
-            <button type="submit" class="mn-btn"><%:Save%></button>
-            <a class="mn-btn mn-btn-secondary" href="<%=luci.dispatcher.build_url('admin/services/mynet/index')%>">
-                <%:Cancel%>
-            </a>
-        </div>
-
-    </form>
-
-    <hr class="mn-divider">
-
-    <h3><%:Credential Status%></h3>
-    <p class="mn-muted mn-small">
-        <%=pcdata(user_email ~="" and user_email or "(not logged in)" )%>
-            &nbsp;·&nbsp;
-            <a href="<%=luci.dispatcher.build_url('admin/services/mynet/logout')%>">
-                <%:Logout%>
-            </a>
-    </p>
-
-    <%+footer%>
+<%+footer%>

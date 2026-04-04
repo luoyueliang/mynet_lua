@@ -1,52 +1,55 @@
 <%+header%>
-    <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+<link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
 
-    <div class="mn-login-wrap">
-        <div class="mn-login-box">
+<div class="mn-login-wrap">
+    <div class="mn-login-box">
 
-            <div class="mn-login-logo">
-                <h2>MyNet VPN</h2>
-                <p class="mn-muted">OpenWrt Management</p>
+        <div class="mn-login-logo">
+            <h2>MyNet</h2>
+            <p class="mn-muted">OpenWrt Management</p>
+        </div>
+
+        <% if login_error then %>
+        <div class="alert-message error">
+            <%=pcdata(login_error)%>
+        </div>
+        <% end %>
+
+        <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/login')%>">
+            <div style="margin-bottom:16px">
+                <label for="email" style="display:block;margin-bottom:4px;font-size:.9em;color:var(--mn-text-muted,#666)"><%:Email%></label>
+                <input type="email" id="email" name="email" class="cbi-input-text" style="width:100%"
+                    value="<%=pcdata(prefill_email or '')%>"
+                    placeholder="user@example.com" autocomplete="username" required>
             </div>
 
-            <% if login_error then %>
-                <div class="mn-alert mn-alert-error">
-                    <%=pcdata(login_error)%>
-                </div>
-                <% end %>
+            <div style="margin-bottom:20px">
+                <label for="password" style="display:block;margin-bottom:4px;font-size:.9em;color:var(--mn-text-muted,#666)"><%:Password%></label>
+                <input type="password" id="password" name="password" class="cbi-input-password" style="width:100%"
+                    autocomplete="current-password" required>
+            </div>
 
-                    <form method="post" action="<%=luci.dispatcher.build_url('admin/services/mynet/login')%>" class="mn-form">
-                        <div class="mn-form-group">
-                            <label for="email">
-                                <%:Email%>
-                            </label>
-                            <input type="email" id="email" name="email" value="<%=pcdata(prefill_email or '')%>"
-                                placeholder="user@example.com" autocomplete="username" required>
-                        </div>
+            <div style="text-align:center">
+                <button type="submit" class="cbi-button cbi-button-apply" style="width:100%">
+                    <%:Login%>
+                </button>
+            </div>
+        </form>
 
-                        <div class="mn-form-group">
-                            <label for="password">
-                                <%:Password%>
-                            </label>
-                            <input type="password" id="password" name="password" autocomplete="current-password"
-                                required>
-                        </div>
+        <p class="mn-muted mn-small" style="margin-top:1rem;text-align:center">
+            <%:No account?%>
+            <a href="https://my.mynet.club/auth/register" target="_blank" rel="noopener"><%:Register at mynet.club%></a>
+        </p>
 
-                        <button type="submit" class="mn-btn mn-btn-block">
-                            <%:Login%>
-                        </button>
-                    </form>
+        <hr style="margin:16px 0;border-color:#eee">
+        <p class="mn-muted mn-small" style="text-align:center">
+            <%:Don't want to register?%>
+            <a href="<%=luci.dispatcher.build_url('admin/services/mynet/guest')%>">
+                <%:Try GNB Offline Mode%> &rarr;
+            </a>
+        </p>
 
-                    <p class="mn-login-hint mn-muted">
-                        <%:Credentials are stored in%> <code>/etc/mynet/conf/credential.json</code>
-                    </p>
-
-                    <p class="mn-login-hint mn-muted">
-                        <%:No account?%>
-                        <a href="https://mynet.club/register" target="_blank" rel="noopener"><%:Register at mynet.club%></a>
-                    </p>
-
-        </div>
     </div>
+</div>
 
-    <%+footer%>
+<%+footer%>

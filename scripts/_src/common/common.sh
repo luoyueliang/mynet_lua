@@ -92,18 +92,9 @@ print_success() {
 # 平台检测
 # =====================================================
 
-# 检测操作系统平台类型
-# 返回: openwrt | linux | macos | unknown
+# 检测操作系统平台类型（仅 OpenWrt）
 detect_platform() {
-    if [ -f /etc/openwrt_release ]; then
-        echo "openwrt"
-    elif [ "$(uname -s)" = "Linux" ]; then
-        echo "linux"
-    elif [ "$(uname -s)" = "Darwin" ]; then
-        echo "macos"
-    else
-        echo "unknown"
-    fi
+    echo "openwrt"
 }
 
 # =====================================================
@@ -471,11 +462,6 @@ detect_mynet_vpn_interfaces() {
         patterns=("$(detect_vpn_interface_pattern "$vpn_type")")
     fi
 
-    # macOS 兼容：WireGuard/隧道通常为 utunX（不可自定义命名）
-    if [ "$(detect_platform)" = "macos" ]; then
-        patterns+=("utun*")
-    fi
-
     # 如果配置文件中指定了 VPN_INTERFACE，优先包含
     local cfg=$(find_mynet_config "mynet.conf" 2>/dev/null)
     if [ -n "$cfg" ] && [ -f "$cfg" ]; then
@@ -529,9 +515,6 @@ is_mynet_interface() {
     case "$name" in
         gnb_tun*|WG*|wg*) return 0 ;;
     esac
-    if [ "$(detect_platform)" = "macos" ]; then
-        case "$name" in utun*) return 0 ;; esac
-    fi
     return 1
 }
 
@@ -554,17 +537,6 @@ detect_primary_mynet_interface() {
             echo "$name"; return 0
         fi
     done
-
-    # macOS 追加 utun*
-    if [ "$(detect_platform)" = "macos" ]; then
-        for netdir in /sys/class/net/utun*; do
-            [ -d "$netdir" ] || continue
-            local name=$(basename "$netdir")
-            if interface_is_up "$name"; then
-                echo "$name"; return 0
-            fi
-        done
-    fi
 
     return 1
 }
@@ -710,28 +682,13 @@ netmask_to_cidr() {
 # MyNet服务管理
 # =====================================================
 
-# 检测MyNet服务状态
+# 检测MyNet服务状态（OpenWrt init.d）
 check_mynet_service_status() {
     local service_name="${1:-mynet}"
     local status="unknown"
     
-    # 检测不同的init系统
-    if command -v systemctl >/dev/null 2>&1; then
-        if systemctl is-active "$service_name" >/dev/null 2>&1; then
-            status="running"
-        elif systemctl is-enabled "$service_name" >/dev/null 2>&1; then
-            status="stopped"
-        else
-            status="disabled"
-        fi
-    elif [ -f "/etc/init.d/$service_name" ]; then
+    if [ -f "/etc/init.d/$service_name" ]; then
         if "/etc/init.d/$service_name" status >/dev/null 2>&1; then
-            status="running"
-        else
-            status="stopped"
-        fi
-    elif command -v rc-service >/dev/null 2>&1; then
-        if rc-service "$service_name" status >/dev/null 2>&1; then
             status="running"
         else
             status="stopped"
