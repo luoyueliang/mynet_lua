@@ -11,8 +11,9 @@ set -euo pipefail
 
 # 配置项
 SCRIPT_VERSION="1.0.0"  # 脚本版本（用于自更新检测）
-SCRIPT_UPDATE_URL="https://ctl.mynet.club/v.json"  # 脚本版本清单
-MANIFEST_URL_DEFAULT="https://download.mynet.club/mynet/manifest.json"
+CTL_BASE_URL="${CTL_BASE_URL:-https://ctl.mynet.club}"
+SCRIPT_UPDATE_URL="${CTL_BASE_URL}/v.json"  # 脚本版本清单
+MANIFEST_URL_DEFAULT="${CTL_BASE_URL}/api/v2/mynet/manifest.json"
 MANIFEST_URL="${MYNET_MANIFEST_URL:-$MANIFEST_URL_DEFAULT}"
 TMP_DIR="${TMPDIR:-/tmp}/mynet-install-$$"
 
@@ -89,7 +90,7 @@ check_script_update() {
 
         # 下载新脚本
         local new_script="/tmp/mynet-install-new-$$.sh"
-        if curl -fsSL "https://ctl.mynet.club/install.sh" -o "$new_script"; then
+        if curl -fsSL "${CTL_BASE_URL}/install.sh" -o "$new_script"; then
             chmod +x "$new_script"
             log "使用最新脚本重新执行..."
             # 设置标志避免循环更新
@@ -129,7 +130,7 @@ ensure_jq() {
     esac
 
     # 尝试下载特定架构的 jq
-    local jq_url="https://download.mynet.club/tools/jq-linux-${jq_arch}"
+    local jq_url="${CTL_BASE_URL}/tools/jq-linux-${jq_arch}"
     local jq_bin="/usr/local/bin/jq"
     [[ -w "/usr/bin" ]] && jq_bin="/usr/bin/jq"
 
@@ -147,7 +148,7 @@ ensure_jq() {
     # 如果特定架构下载失败，尝试 latest (通用版本)
     if [[ $download_success -eq 0 ]]; then
         warn "未找到 jq-linux-${jq_arch}，尝试使用通用版本..."
-        jq_url="https://download.mynet.club/tools/jq-linux-latest"
+        jq_url="${CTL_BASE_URL}/tools/jq-linux-latest"
 
         if have_cmd curl; then
             curl -fsSL "$jq_url" -o "$jq_bin" 2>/dev/null && download_success=1
@@ -581,7 +582,7 @@ parse_manifest() {
 
     # 如果没有找到精确信息，使用默认URL
     if [[ -z "$download_url" ]]; then
-        download_url="https://download.mynet.club/mynet/${target_version}/${filename}"
+        download_url="${CTL_BASE_URL}/mynet/${target_version}/${filename}"
         sha256_hash=""
     fi
 

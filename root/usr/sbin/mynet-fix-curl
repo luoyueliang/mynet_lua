@@ -20,7 +20,7 @@ GNUTLS_PKG="libcurl-gnutls4"
 GNUTLS_LIB="/usr/lib/libcurl-gnutls.so.4"
 CURL_LIB="/usr/lib/libcurl.so.4"
 BACKUP_LIB="${CURL_LIB}.mbedtls.bak"
-TEST_URL="https://download.mynet.club/apps.json"
+TEST_URL="https://ctl.mynet.club/d/apps.json"
 
 log()  { echo "[mynet-fix-curl] $*"; }
 ok()   { echo "[mynet-fix-curl] ✓ $*"; }

@@ -114,6 +114,119 @@ function M.get_services_index()
 end
 
 -- ─────────────────────────────────────────────────────────────
+-- config-bundle: 一次性获取全部配置+密钥（v2 API）
+-- GET /nodes/{id}/config-bundle
+-- 返回: (bundle_table, nil) 或 (nil, error_string)
+-- ─────────────────────────────────────────────────────────────
+function M.get_config_bundle(node_id)
+    local current, err = auth.ensure_valid()
+    if err then return nil, err end
+
+    local zone    = cfg.load_current_zone()
+    local zone_id = zone and zone.zone_id or "0"
+    local endpoint = string.format("/nodes/%s/config-bundle", nid(node_id))
+
+    local data, api_err = api.get_json(cfg.get_api_url(), endpoint,
+        current.token, zone_id)
+    if api_err then return nil, api_err end
+    if not data or not data.success then
+        return nil, (data and data.message) or "config-bundle failed"
+    end
+    return data.data, nil
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- sync_config_bundle: 通过 config-bundle API 一次性写入全部配置+密钥
+-- 返回: { ok, files=[], errors=[] }
+-- ─────────────────────────────────────────────────────────────
+function M.sync_config_bundle(node_id)
+    local results = { ok = true, files = {}, errors = {} }
+    local n = nid(node_id)
+    local conf_dir = string.format("%s/%s", util.GNB_CONF_DIR, n)
+    util.ensure_dir(conf_dir)
+
+    local bundle, err = M.get_config_bundle(node_id)
+    if err then
+        results.ok = false
+        results.errors[#results.errors+1] = "config-bundle: " .. err
+        return results
+    end
+
+    local files = bundle.files or {}
+
+    -- 写入 node.conf
+    if files["node.conf"] and files["node.conf"] ~= "" then
+        local path = string.format("%s/%s/node.conf", cfg.get_gnb_conf_root(), n)
+        local ok, we = util.write_file(path, files["node.conf"] .. "\n")
+        if ok then
+            results.files[#results.files+1] = path
+        else
+            results.ok = false
+            results.errors[#results.errors+1] = "write node.conf: " .. (we or "")
+        end
+    end
+
+    -- 写入 address.conf
+    if files["address.conf"] and files["address.conf"] ~= "" then
+        local path = string.format("%s/address.conf", conf_dir)
+        local ok, we = util.write_file(path, files["address.conf"] .. "\n")
+        if ok then
+            results.files[#results.files+1] = path
+        else
+            util.log_warn("sync_config_bundle: write address.conf: " .. (we or ""))
+        end
+    end
+
+    -- 写入 route.conf
+    if files["route.conf"] and files["route.conf"] ~= "" then
+        local path = string.format("%s/route.conf", conf_dir)
+        local ok, we = util.write_file(path, files["route.conf"] .. "\n")
+        if ok then
+            results.files[#results.files+1] = path
+        else
+            results.ok = false
+            results.errors[#results.errors+1] = "write route.conf: " .. (we or "")
+        end
+    end
+
+    -- 写入密钥
+    local keys = bundle.keys or {}
+
+    -- ed25519 公钥（对端）
+    local ed = keys.ed25519 or {}
+    if next(ed) then
+        local ed_dir = string.format("%s/ed25519", conf_dir)
+        util.ensure_dir(ed_dir)
+        local count = 0
+        for peer_id, pub_hex in pairs(ed) do
+            pub_hex = util.trim(pub_hex)
+            if #pub_hex == 64 and pub_hex:match("^[0-9a-fA-F]+$") then
+                util.write_file(string.format("%s/%s.public", ed_dir, peer_id), pub_hex)
+                count = count + 1
+            end
+        end
+        if count > 0 then
+            results.files[#results.files+1] = string.format("peer_keys(%d)", count)
+        end
+    end
+
+    -- security 密钥（本节点）
+    local sec = keys.security or {}
+    if sec.private and sec.private ~= "" then
+        local sec_dir = string.format("%s/security", conf_dir)
+        util.ensure_dir(sec_dir)
+        local priv_path = string.format("%s/%s.private", sec_dir, n)
+        util.write_file(priv_path, util.trim(sec.private))
+        os.execute("chmod 600 " .. priv_path .. " 2>/dev/null")
+        if sec.public and sec.public ~= "" then
+            util.write_file(string.format("%s/%s.public", sec_dir, n), util.trim(sec.public))
+        end
+    end
+
+    return results
+end
+
+-- ─────────────────────────────────────────────────────────────
 -- 更新节点状态（上报到服务端）
 -- 对应 Go: PATCH /nodes/{id}/status
 -- ─────────────────────────────────────────────────────────────
@@ -1084,6 +1197,13 @@ end
 
 function M.start_gnb(node_id)
     local n    = nid(node_id)
+
+    -- Pre-flight config check
+    local check = M.check_config(node_id)
+    if not check.ok then
+        return nil, "config check failed: " .. table.concat(check.errors, "; ")
+    end
+
     local bin  = util.GNB_BIN_DIR .. "/gnb"
     local conf = string.format("%s/%s", util.GNB_CONF_DIR, n)
     local log  = conf .. "/gnb.log"
@@ -1426,6 +1546,279 @@ function M.import_apply(tmp_dir, node_id)
     -- 清理临时目录
     os.execute("rm -rf '" .. tmp_dir .. "'")
     return true, nil
+end
+
+-- ═════════════════════════════════════════════════════════════
+-- 三层服务管理：GNB 进程 + 路由 + 防火墙
+-- ═════════════════════════════════════════════════════════════
+
+-- ── 辅助：从 node.conf 提取 tun 接口名 ──────────────────────
+
+local function parse_tun_iface(node_id)
+    local node_conf = string.format("%s/%s/node.conf", cfg.get_gnb_conf_root(), nid(node_id))
+    local content = util.read_file(node_conf) or ""
+    return content:match("ifname%s+(%S+)")
+end
+
+-- ── 辅助：等待 tun 接口出现 ──────────────────────────────────
+
+local function wait_for_iface(ifname, timeout_s)
+    timeout_s = timeout_s or 5
+    for _ = 1, timeout_s * 3 do
+        local out = util.trim(util.exec("ip link show " .. ifname .. " 2>/dev/null") or "")
+        if out ~= "" then return true end
+        util.exec("sleep 0.3")
+    end
+    return false
+end
+
+-- ── 辅助：从 route.conf 解析对端路由 ────────────────────────
+
+local function parse_route_entries(node_id)
+    local self_nid = nid(node_id)
+    local route_path = string.format("%s/%s/route.conf", util.GNB_CONF_DIR, self_nid)
+    local content = util.trim(util.read_file(route_path) or "")
+    local routes = {}
+    for line in (content .. "\n"):gmatch("([^\n]*)\n") do
+        line = util.trim(line)
+        if line ~= "" and not line:match("^#") then
+            local nid_val, network, netmask = line:match("^([^|]+)|([^|]+)|(.+)$")
+            if nid_val and nid_val ~= self_nid then
+                routes[#routes + 1] = { network = util.trim(network), netmask = util.trim(netmask) }
+            end
+        end
+    end
+    return routes
+end
+
+-- ── netmask → CIDR ──
+
+local function mask_to_cidr(mask)
+    local map = {
+        ["255.255.255.255"] = 32, ["255.255.255.0"] = 24,
+        ["255.255.0.0"] = 16, ["255.0.0.0"] = 8,
+        ["255.255.255.128"] = 25, ["255.255.255.192"] = 26,
+        ["255.255.255.224"] = 27, ["255.255.255.240"] = 28,
+        ["255.255.255.248"] = 29, ["255.255.255.252"] = 30,
+        ["255.255.128.0"] = 17, ["255.255.192.0"] = 18,
+        ["255.255.224.0"] = 19, ["255.255.240.0"] = 20,
+        ["255.255.248.0"] = 21, ["255.255.252.0"] = 22,
+        ["255.255.254.0"] = 23,
+    }
+    return map[mask] or 24
+end
+
+-- ── Layer 2: 路由管理 ────────────────────────────────────────
+
+function M.apply_routes(node_id)
+    local tun = parse_tun_iface(node_id)
+    if not tun then return { ok = false, count = 0, errors = {"cannot determine tun interface"} } end
+
+    local routes = parse_route_entries(node_id)
+    local count = 0
+    local errors = {}
+    for _, r in ipairs(routes) do
+        local cidr = mask_to_cidr(r.netmask)
+        local dest = r.network .. "/" .. cidr
+        local _, code = util.exec_status(string.format(
+            "ip route replace %s dev %s 2>&1", dest, tun))
+        if code == 0 then
+            count = count + 1
+        else
+            errors[#errors + 1] = "route " .. dest .. " failed"
+        end
+    end
+    util.log_info(string.format("apply_routes: %d route(s) applied for node %s", count, nid(node_id)))
+    return { ok = #errors == 0, count = count, errors = errors }
+end
+
+function M.clear_routes(node_id)
+    local tun = parse_tun_iface(node_id)
+    if not tun then return end
+    local out = util.trim(util.exec("ip route show dev " .. tun .. " 2>/dev/null") or "")
+    for line in (out .. "\n"):gmatch("([^\n]*)\n") do
+        local dest = util.trim(line):match("^(%S+)")
+        if dest then
+            util.exec("ip route del " .. dest .. " dev " .. tun .. " 2>/dev/null; true")
+        end
+    end
+end
+
+-- ── Layer 3: 防火墙管理（OpenWrt UCI） ───────────────────────
+
+-- 查找 mynet zone 的 UCI 索引
+local function find_fw_zone_index()
+    for i = 0, 15 do
+        local name = util.trim(util.exec(
+            string.format("uci get firewall.@zone[%d].name 2>/dev/null", i)) or "")
+        if name == "" then break end
+        if name == "mynet" then return i end
+    end
+    return nil
+end
+
+function M.apply_firewall(node_id)
+    local errors = {}
+    local tun = parse_tun_iface(node_id)
+    if not tun then
+        return { ok = false, errors = {"cannot determine tun interface"} }
+    end
+
+    -- 启用 IP 转发
+    util.exec("sysctl -w net.ipv4.ip_forward=1 2>/dev/null; true")
+
+    -- 确保 mynet firewall zone 存在
+    local zi = find_fw_zone_index()
+    if not zi then
+        -- 创建 mynet zone
+        util.exec("uci add firewall zone 2>/dev/null")
+        -- 重新查找索引
+        local zones_out = util.trim(util.exec("uci show firewall 2>/dev/null | grep -c '=zone'") or "0")
+        zi = (tonumber(zones_out) or 1) - 1
+        util.exec(string.format("uci set firewall.@zone[%d].name='mynet'", zi))
+    end
+
+    -- 配置 zone
+    local cmds = {
+        string.format("uci set firewall.@zone[%d].network='mynet'", zi),
+        string.format("uci set firewall.@zone[%d].input='ACCEPT'", zi),
+        string.format("uci set firewall.@zone[%d].output='ACCEPT'", zi),
+        string.format("uci set firewall.@zone[%d].forward='ACCEPT'", zi),
+        string.format("uci set firewall.@zone[%d].masq='1'", zi),
+        string.format("uci set firewall.@zone[%d].device='%s'", zi, tun),
+    }
+    for _, cmd in ipairs(cmds) do
+        util.exec(cmd .. " 2>/dev/null; true")
+    end
+
+    -- 确保 lan→mynet forwarding 存在
+    local has_fwd = false
+    for i = 0, 30 do
+        local src = util.trim(util.exec(
+            string.format("uci get firewall.@forwarding[%d].src 2>/dev/null", i)) or "")
+        local dest = util.trim(util.exec(
+            string.format("uci get firewall.@forwarding[%d].dest 2>/dev/null", i)) or "")
+        if src == "" then break end
+        if src == "lan" and dest == "mynet" then has_fwd = true; break end
+    end
+    if not has_fwd then
+        util.exec("uci add firewall forwarding 2>/dev/null")
+        local fwd_out = util.trim(util.exec("uci show firewall 2>/dev/null | grep -c '=forwarding'") or "0")
+        local fi = (tonumber(fwd_out) or 1) - 1
+        util.exec(string.format("uci set firewall.@forwarding[%d].src='lan'", fi))
+        util.exec(string.format("uci set firewall.@forwarding[%d].dest='mynet'", fi))
+    end
+
+    -- 提交并重载
+    local _, code = util.exec_status("uci commit firewall 2>&1 && fw4 reload 2>&1 || fw3 reload 2>&1")
+    if code ~= 0 then
+        errors[#errors + 1] = "firewall reload failed"
+    end
+
+    util.log_info("apply_firewall: zone mynet configured for " .. tun)
+    return { ok = #errors == 0, errors = errors }
+end
+
+function M.clear_firewall(node_id)
+    -- 不删除 UCI zone（保守策略），仅重载防火墙
+    util.exec("fw4 reload 2>/dev/null || fw3 reload 2>/dev/null; true")
+end
+
+-- ── 配置校验 ─────────────────────────────────────────────────
+
+function M.check_config(node_id)
+    local n = nid(node_id)
+    local errors = {}
+    local warnings = {}
+
+    -- node.conf
+    local nc_path = string.format("%s/%s/node.conf", cfg.get_gnb_conf_root(), n)
+    local nc = util.read_file(nc_path)
+    if not nc or nc == "" then
+        errors[#errors + 1] = "node.conf not found or empty"
+    elseif not nc:find("nodeid") then
+        errors[#errors + 1] = "node.conf missing nodeid directive"
+    end
+
+    -- address.conf
+    local ac_path = string.format("%s/%s/address.conf", util.GNB_CONF_DIR, n)
+    local ac = util.read_file(ac_path)
+    if not ac or ac == "" then
+        errors[#errors + 1] = "address.conf not found or empty"
+    elseif not ac:find("^i|", 1) and not ac:find("\ni|") then
+        warnings[#warnings + 1] = "address.conf has no index entries"
+    end
+
+    -- ed25519 自身公钥
+    local pk_path = string.format("%s/%s/ed25519/%s.public", util.GNB_CONF_DIR, n, n)
+    if not util.file_exists(pk_path) then
+        errors[#errors + 1] = "own ed25519 public key not found"
+    end
+
+    -- security 私钥
+    local sk_path = string.format("%s/%s/security/%s.private", util.GNB_CONF_DIR, n, n)
+    if not util.file_exists(sk_path) then
+        errors[#errors + 1] = "security private key not found"
+    end
+
+    -- gnb binary
+    local bin = util.GNB_BIN_DIR .. "/gnb"
+    if not util.file_exists(bin) then
+        errors[#errors + 1] = "gnb binary not found"
+    end
+
+    return { ok = #errors == 0, errors = errors, warnings = warnings }
+end
+
+-- ── 三层联动：start_service / stop_service ──────────────────
+
+function M.start_service(node_id)
+    -- 0. Pre-flight check
+    local check = M.check_config(node_id)
+    if not check.ok then
+        return nil, "config check failed: " .. table.concat(check.errors, "; ")
+    end
+
+    -- 1. Start GNB process
+    local ok, err = M.start_gnb(node_id)
+    if not ok then return nil, "gnb start: " .. (err or "unknown") end
+
+    -- 2. Wait for tun interface, apply routes
+    local tun = parse_tun_iface(node_id)
+    if tun then
+        local ready = wait_for_iface(tun, 5)
+        if ready then
+            local rr = M.apply_routes(node_id)
+            if not rr.ok then
+                util.log_warn("start_service: route errors: " .. table.concat(rr.errors, "; "))
+            end
+            -- 3. Apply firewall
+            local fr = M.apply_firewall(node_id)
+            if not fr.ok then
+                util.log_warn("start_service: firewall errors: " .. table.concat(fr.errors, "; "))
+            end
+        else
+            util.log_warn("start_service: tun " .. tun .. " not ready after 5s, skipping routes/fw")
+        end
+    end
+
+    return true, nil
+end
+
+function M.stop_service(node_id)
+    -- 1. Clear firewall
+    M.clear_firewall(node_id)
+    -- 2. Clear routes
+    M.clear_routes(node_id)
+    -- 3. Stop GNB
+    M.stop_gnb(node_id)
+    return true, nil
+end
+
+function M.restart_service(node_id)
+    M.stop_service(node_id)
+    util.exec("sleep 0.5")
+    return M.start_service(node_id)
 end
 
 return M
