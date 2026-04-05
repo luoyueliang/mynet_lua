@@ -65,29 +65,6 @@ build_ipk() {
     install -m 0644 "$PROJECT_DIR/root/etc/mynet/conf/config.json" \
         "$data_dir/etc/mynet/conf/"
 
-    # --- Runtime scripts: _src/common ---
-    install -d "$data_dir/etc/mynet/scripts/_src/common"
-    install -m 0755 "$PROJECT_DIR/scripts/_src/common/common.sh" \
-        "$data_dir/etc/mynet/scripts/_src/common/"
-    install -m 0755 "$PROJECT_DIR/scripts/_src/common/route.sh" \
-        "$data_dir/etc/mynet/scripts/_src/common/"
-    install -m 0755 "$PROJECT_DIR/scripts/_src/common/vpn.sh" \
-        "$data_dir/etc/mynet/scripts/_src/common/"
-
-    # --- Runtime scripts: _src/openwrt ---
-    install -d "$data_dir/etc/mynet/scripts/_src/openwrt"
-    install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/service-manager.sh" \
-        "$data_dir/etc/mynet/scripts/_src/openwrt/"
-    install -d "$data_dir/etc/mynet/scripts/_src/openwrt/runtime/modules"
-    install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/runtime/modules/firewall.sh" \
-        "$data_dir/etc/mynet/scripts/_src/openwrt/runtime/modules/"
-    install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/runtime/modules/route.sh" \
-        "$data_dir/etc/mynet/scripts/_src/openwrt/runtime/modules/"
-    install -m 0644 "$PROJECT_DIR/scripts/_src/openwrt/runtime/firewall.mynet" \
-        "$data_dir/etc/mynet/scripts/_src/openwrt/runtime/"
-    install -m 0644 "$PROJECT_DIR/scripts/_src/openwrt/runtime/route.mynet" \
-        "$data_dir/etc/mynet/scripts/_src/openwrt/runtime/"
-
     # --- Init script ---
     install -d "$data_dir/etc/init.d"
     install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/runtime/rc.mynet" \
@@ -121,10 +98,15 @@ build_ipk() {
     install -m 0755 "$PROJECT_DIR/root/usr/sbin/mynet-fix-curl" \
         "$data_dir/usr/sbin/"
 
+    # --- Deploy route.mynet / firewall.mynet to scripts/ (fixed path) ---
+    install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/runtime/route.mynet" \
+        "$data_dir/etc/mynet/scripts/"
+    install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/runtime/firewall.mynet" \
+        "$data_dir/etc/mynet/scripts/"
+
     # --- Runtime directories ---
     install -d "$data_dir/etc/mynet/logs"
     install -d "$data_dir/etc/mynet/driver/gnb"
-    install -d "$data_dir/etc/mynet/scripts"
 
     # --- i18n translations (.po → .lmo) ---
     install -d "$data_dir/usr/lib/lua/luci/i18n"
@@ -155,8 +137,15 @@ EOF
     cat > "$ctrl_dir/postinst" <<'POSTINST'
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] && exit 0
+# Clean up legacy _src directory from older versions
+rm -rf /etc/mynet/scripts/_src
+# Enable and load tun module
 modprobe tun 2>/dev/null
+# Install firewall zone (creates network.mynet + zone + forwarding, no device binding yet)
+MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/firewall.mynet install 2>/dev/null
+# Clear LuCI cache
 rm -rf /tmp/luci-*
+# Enable mynet service (don't start — user needs to configure first)
 /etc/init.d/mynet enable 2>/dev/null
 exit 0
 POSTINST
@@ -345,4 +334,4 @@ case "$TARGET" in
 esac
 
 echo ""
-echo "[sync] 完成！浏览器访问: http://localhost:8080/cgi-bin/luci/admin/services/mynet"
+echo "[sync] 完成！浏览器访问: http://192.168.101.2/cgi-bin/luci/admin/services/mynet"

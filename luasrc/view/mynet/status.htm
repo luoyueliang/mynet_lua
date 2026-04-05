@@ -3,13 +3,8 @@
 
 <h2><%:System Status%></h2>
 
-<% local function fmt_bytes(n)
-    n = tonumber(n) or 0
-    if n >= 1073741824 then return string.format("%.2f GB", n/1073741824) end
-    if n >= 1048576    then return string.format("%.2f MB", n/1048576) end
-    if n >= 1024       then return string.format("%.2f KB", n/1024) end
-    return tostring(n) .. " B"
-end %>
+<% local util_m = require("luci.model.mynet.util")
+local fmt_bytes = util_m.fmt_bytes %>
 <% local function fmt_uptime(secs)
     local s = tonumber(secs) or 0
     local d = math.floor(s / 86400)

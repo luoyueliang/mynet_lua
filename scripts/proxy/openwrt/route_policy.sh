@@ -21,9 +21,13 @@
 
 set -e
 
-# 检测 MYNET_HOME（脚本在 $MYNET_HOME/scripts/ 目录下）
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MYNET_HOME="$(dirname "$SCRIPT_DIR")"
+# 检测 MYNET_HOME
+# 优先使用调用方传入的环境变量（proxy.sh 会设置 MYNET_HOME=...）
+# 否则从脚本路径推导：scripts/proxy/openwrt/route_policy.sh → 上溯 3 级
+if [ -z "${MYNET_HOME:-}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    MYNET_HOME="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+fi
 
 # ─── 日志捕获 ───
 MYNET_LOG_DIR="$MYNET_HOME/logs"
@@ -1176,15 +1180,8 @@ refresh() {
     echo "[INFO] 刷新代理配置..."
     echo ""
 
-    local mynet_proxy_bin="$MYNET_HOME/bin/mynet_proxy"
-
-    if [[ ! -f "$mynet_proxy_bin" ]]; then
-        echo "[ERROR] mynet_proxy 未安装: $mynet_proxy_bin"
-        return 1
-    fi
-
     # 步骤 1: 下载远程 IP 列表
-    echo "[INFO] 步骤 1/4: 下载远程 IP 列表"
+    echo "[INFO] 步骤 1/3: 下载远程 IP 列表"
 
     local sources_dir="$MYNET_HOME/conf/proxy/proxy_sources"
     mkdir -p "$sources_dir"
@@ -1220,32 +1217,26 @@ refresh() {
 
     echo ""
 
-    # 步骤 2: 重新生成 IP 列表
-    echo "[INFO] 步骤 2/4: 重新生成 IP 列表"
+    # 步骤 2: 重新生成路由配置（调用 proxy.sh 的 generate_proxy_config）
+    echo "[INFO] 步骤 2/3: 重新生成路由配置"
 
-    if MYNET_HOME="$MYNET_HOME" "$mynet_proxy_bin" ipconfig --force; then
-        echo "[INFO] ✓ IP 列表已重新生成"
+    local proxy_sh="$MYNET_HOME/scripts/proxy/proxy.sh"
+    if [[ -f "$proxy_sh" ]]; then
+        if MYNET_HOME="$MYNET_HOME" bash "$proxy_sh" generate_config --force; then
+            echo "[INFO] ✓ 路由配置已重新生成"
+        else
+            echo "[ERROR] 生成路由配置失败"
+            return 1
+        fi
     else
-        echo "[ERROR] 生成 IP 列表失败"
+        echo "[ERROR] proxy.sh 不存在: $proxy_sh"
         return 1
     fi
 
     echo ""
 
-    # 步骤 3: 重新应用策略路由配置
-    echo "[INFO] 步骤 3/4: 重新应用策略路由"
-
-    if MYNET_HOME="$MYNET_HOME" "$mynet_proxy_bin" apply; then
-        echo "[INFO] ✓ 策略路由配置已更新"
-    else
-        echo "[ERROR] 应用策略路由失败"
-        return 1
-    fi
-
-    echo ""
-
-    # 步骤 4: 重启策略路由
-    echo "[INFO] 步骤 4/4: 重启策略路由"
+    # 步骤 3: 重启策略路由
+    echo "[INFO] 步骤 3/3: 重启策略路由"
 
     stop
     sleep 1
@@ -1265,13 +1256,6 @@ setup_proxy() {
     echo "[INFO] 建议在配置变更时才运行此命令"
     echo ""
 
-    local mynet_proxy_bin="$MYNET_HOME/bin/mynet_proxy"
-
-    if [[ ! -f "$mynet_proxy_bin" ]]; then
-        echo "[ERROR] mynet_proxy 未安装: $mynet_proxy_bin"
-        return 1
-    fi
-
     # 检查是否有现有配置
     local role_conf="$MYNET_HOME/conf/proxy/proxy_role.conf"
     if [[ -f "$role_conf" ]]; then
@@ -1280,22 +1264,11 @@ setup_proxy() {
         echo ""
     fi
 
-    echo "[ERROR] 交互式配置暂未实现"
-    echo "[INFO] 请使用以下方式重新配置："
-    echo ""
-    echo "  方式 1: 直接调用 mynet_proxy setup"
-    echo "    MYNET_HOME=$MYNET_HOME \\"
-    echo "      $mynet_proxy_bin setup \\"
-    echo "      --role client \\"
-    echo "      --node-region domestic \\"
-    echo "      --peers \"1,2\""
-    echo ""
-    echo "  方式 2: 重新运行安装脚本"
-    echo "    cd $MYNET_HOME/scripts/proxy"
-    echo "    sudo ./install.sh install"
+    echo "[INFO] 请通过 LuCI 界面 (admin/services/mynet/proxy) 修改配置"
+    echo "[INFO] 或直接编辑: $role_conf"
     echo ""
 
-    return 1
+    return 0
 }
 
 # 主函数

@@ -28,6 +28,23 @@ function M.set_mode(mode)
 end
 
 -- ─────────────────────────────────────────────────────────────
+-- 判断系统是否已有完整的 MyNet 配置
+-- 依据配置文件状态判断，不依赖登录/Token 状态
+-- 返回: true（已配置）/ false（未配置或不完整）
+-- ─────────────────────────────────────────────────────────────
+function M.is_mynet_configured()
+    -- 1. mynet.conf 存在且有有效 NODE_ID
+    local node_id = M.get_node_id()
+    if not node_id or node_id == 0 then return false end
+    -- 2. zone 已选择
+    local zone = M.load_current_zone()
+    if not zone or tostring(zone.zone_id) == "0" then return false end
+    -- 3. mynet.conf 文件存在
+    if not util.file_exists(util.VPN_CONF) then return false end
+    return true
+end
+
+-- ─────────────────────────────────────────────────────────────
 -- Server Config (config.json)
 -- ─────────────────────────────────────────────────────────────
 
@@ -133,18 +150,7 @@ end
 
 -- 加载 mynet.conf → { KEY = value, ... }
 function M.load_vpn_conf()
-    local content = util.read_file(util.VPN_CONF)
-    if not content then return {} end
-    local result = {}
-    for line in content:gmatch("[^\n]+") do
-        line = util.trim(line)
-        if line ~= "" and not line:match("^#") then
-            -- 匹配 KEY="value" 或 KEY=value
-            local k, v = line:match('^([%w_]+)%s*=%s*"?(.-)"?%s*$')
-            if k then result[k] = v end
-        end
-    end
-    return result
+    return util.parse_bash_conf(util.VPN_CONF) or {}
 end
 
 -- 快捷：VPN 类型（gnb 或 wireguard）

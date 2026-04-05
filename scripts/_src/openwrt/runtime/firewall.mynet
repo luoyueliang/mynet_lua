@@ -7,11 +7,18 @@
 # - stop: 不删除 masq(保持配置)
 #
 # 调用方式:
-#   firewall.mynet install --interface <device> --mynet-home /path/to/mynet   # 安装时调用
-#   firewall.mynet uninstall --mynet-home /path/to/mynet                       # 卸载时调用
+#   firewall.mynet install                                                     # ipk postinst 调用（不需要 --interface）
+#   firewall.mynet uninstall                                                   # 卸载时调用
 #   firewall.mynet start --interface <device> --mynet-home /path/to/mynet      # 启动时调用(管理masq)
 #   firewall.mynet stop --mynet-home /path/to/mynet                            # 停止时调用(不删除masq)
 #   firewall.mynet status --mynet-home /path/to/mynet                          # 查看状态
+#
+# 生命周期:
+#   install:  创建 network.mynet(proto=none) + zone + forwarding + 注册 include
+#             此时不知道物理设备名，只创建逻辑网络结构
+#   start:    绑定 network.mynet.device + 写入 include 脚本 + 添加 masq 规则
+#   stop:     不删除 masq（保持配置）
+#   uninstall: 清理所有防火墙配置
 #
 # 说明:
 #   - 必须通过 --mynet-home 参数或 MYNET_HOME 环境变量指定安装目录
@@ -29,11 +36,6 @@ fi
 
 if [ ! -d "$MYNET_HOME" ]; then
     echo "[firewall.mynet] FATAL: MYNET_HOME directory does not exist: $MYNET_HOME" >&2
-    exit 1
-fi
-
-if [ ! -f "$MYNET_HOME/conf/mynet.conf" ]; then
-    echo "[firewall.mynet] FATAL: mynet.conf not found: $MYNET_HOME/conf/mynet.conf" >&2
     exit 1
 fi
 
@@ -385,16 +387,15 @@ create_vpn_zone() {
     log "Creating VPN zone: $VPN_ZONE_NAME (using $fw_version)"
     
     # Network interface name (logical interface in /etc/config/network)
-    # 应该由 service-manager.sh 在调用此函数前创建
+    # install 阶段已创建 network.mynet
     local network_interface="mynet"
     
-    # 验证网络接口是否存在
-    log "Verifying network interface '$network_interface' exists..."
+    # 验证网络接口是否存在（应由 install_firewall() 预先创建）
     if ! uci get "network.$network_interface" >/dev/null 2>&1; then
-        log "ERROR: Network interface '$network_interface' not found!"
-        log "It must be created by service-manager.sh before calling firewall installation."
-        log "Please check the installation sequence."
-        return 1
+        log "WARNING: Network interface '$network_interface' not found, creating..."
+        uci set "network.$network_interface=interface"
+        uci set "network.$network_interface.proto=none"
+        uci commit network
     fi
     
     log "✓ Network interface '$network_interface' exists"
@@ -509,31 +510,21 @@ install_firewall() {
     # Auto-detect router mode
     detect_router_mode
     
-    # Check if VPN device parameter is provided (for include script)
-    local vpn_device=$(get_vpn_interfaces)
-    if [ -z "$vpn_device" ]; then
-        log "ERROR: No VPN device specified. Use --interface parameter."
-        return 1
-    fi
-    
     local fw_version=$(detect_fw_version)
     log "Detected firewall version: $fw_version"
     
-    # Step 1: Verify network interface exists (必须由 service-manager.sh 创建)
-    log "Step 1: Verifying network interface '$NETWORK_NAME' exists"
+    # Step 1: 创建 network.mynet 逻辑接口（幂等）
+    # 安装阶段不知道物理设备名，只创建逻辑网络
+    # device 绑定由 start 阶段（服务启动时）更新
+    log "Step 1: Ensuring network interface '$NETWORK_NAME' exists"
     if ! uci get "network.$NETWORK_NAME" >/dev/null 2>&1; then
-        log "ERROR: Network interface '$NETWORK_NAME' not found!"
-        log "It MUST be created by service-manager.sh before firewall installation."
-        log ""
-        log "Correct installation sequence:"
-        log "  1. service-manager.sh creates network.$NETWORK_NAME"
-        log "  2. firewall.mynet install creates zone and rules"
-        log ""
-        log "Please check the installation process."
-        return 1
+        uci set "network.$NETWORK_NAME=interface"
+        uci set "network.$NETWORK_NAME.proto=none"
+        uci commit network
+        log "✓ Created network interface '$NETWORK_NAME' (proto=none, no device yet)"
+    else
+        log "✓ Network interface '$NETWORK_NAME' already exists"
     fi
-    
-    log "✓ Network interface '$NETWORK_NAME' exists"
     
     # Step 2: Create VPN zone
     log "Step 2: Creating firewall zone '$VPN_ZONE_NAME'"
@@ -543,9 +534,16 @@ install_firewall() {
     log "Step 3: Configuring forwarding rules"
     configure_firewall_forwarding
     
-    # Step 4: Create firewall include script
-    log "Step 4: Creating firewall include script"
-    create_include_script
+    # Step 4: 注册 include 脚本占位（实际内容由 start 阶段写入）
+    log "Step 4: Registering firewall include entry"
+    if ! uci get firewall.mynet_include >/dev/null 2>&1; then
+        uci set firewall.mynet_include=include
+        uci set firewall.mynet_include.type=script
+        uci set firewall.mynet_include.path="$INCLUDE_SCRIPT"
+        log "✓ Include entry registered"
+    else
+        log "✓ Include entry already registered"
+    fi
     
     # Commit and restart firewall
     uci commit firewall
@@ -553,7 +551,7 @@ install_firewall() {
     /etc/init.d/firewall restart
     
     log "✓ MyNet firewall installation completed successfully"
-    log "NOTE: NAT masq rules will be added when service starts (firewall.mynet start)"
+    log "NOTE: NAT masq rules + include script will be created when service starts (firewall.mynet start)"
     return 0
 }
 
@@ -665,6 +663,17 @@ start_firewall() {
         log "ERROR: VPN device $vpn_device not found. Make sure VPN is started first."
         return 1
     fi
+    
+    # 更新 network.mynet.device 绑定（节点切换可能改变接口名）
+    local cur_dev=$(uci get "network.$NETWORK_NAME.device" 2>/dev/null)
+    if [ "$cur_dev" != "$vpn_device" ]; then
+        uci set "network.$NETWORK_NAME.device=$vpn_device"
+        uci commit network
+        log "✓ Updated network.$NETWORK_NAME.device: ${cur_dev:-<none>} → $vpn_device"
+    fi
+    
+    # 创建/更新 include 脚本（使用实际设备名）
+    create_include_script
     
     # 添加 masq 规则(幂等)
     add_masq_rules
@@ -890,10 +899,10 @@ OPTIONS:
   --router-mode MODE     Router mode (bypass, gateway, auto) [optional]
 
 EXAMPLES:
-  # Installation phase
-  $0 install --interface gnb_tun
+  # Installation phase (ipk postinst, no --interface needed)
+  $0 install
   
-  # Service start phase  
+  # Service start phase (needs actual device name)
   $0 start --interface gnb_tun
   
   # Service stop phase
@@ -903,8 +912,9 @@ EXAMPLES:
   $0 uninstall
 
 ARCHITECTURE:
-  Install:   Creates network.mynet, zone, forwarding, include script
-  Start:     Adds NAT masq rules (idempotent)
+  Install:   Creates network.mynet (proto=none), zone, forwarding, registers include
+             Does NOT need --interface (device unknown at install time)
+  Start:     Binds network.mynet.device, writes include script, adds NAT masq rules
   Stop:      Preserves all configuration
   Uninstall: Removes all MyNet firewall components
 

@@ -5,10 +5,8 @@
 <h2><%:Node Manager%></h2>
 
 <%
-local function nid_fmt(v)
-    if type(v) == "number" then return string.format("%.0f", v) end
-    return tostring(v or 0)
-end
+local util_m = require("luci.model.mynet.util")
+local nid_fmt = util_m.nid_fmt
 local cur_nid_str = nid_fmt(node_id)
 local node_list   = nodes_data and nodes_data.data or {}
 local total       = (nodes_data and nodes_data.total) or 0

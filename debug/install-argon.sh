@@ -13,9 +13,8 @@
 
 set -euo pipefail
 
-ROUTER="root@127.0.0.1"
-PORT=2222
-SSH="ssh -p $PORT -o StrictHostKeyChecking=no $ROUTER"
+ROUTER="openwrt-qemu"
+SSH="ssh -o StrictHostKeyChecking=no $ROUTER"
 BUILD_DIR="$(mktemp -d)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
@@ -47,14 +46,13 @@ THEME_DIR="$BUILD_DIR/luci-theme-argon-${THEME_TAG#v}"
 CONFIG_DIR="$BUILD_DIR/luci-app-argon-config-${CONFIG_TAG#v}"
 
 # ------  通过 Python 构建 tar.gz 并 SSH 管道安装  ------
-python3 - "$THEME_DIR" "$CONFIG_DIR" "$PORT" "$ROUTER" << 'PYEOF'
+python3 - "$THEME_DIR" "$CONFIG_DIR" "$ROUTER" << 'PYEOF'
 import tarfile, gzip, io, os, subprocess, sys
 
 THEME_DIR = sys.argv[1]
 CONFIG_DIR = sys.argv[2]
-PORT      = sys.argv[3]
-ROUTER    = sys.argv[4]
-SSH       = ['ssh', '-p', PORT, '-o', 'StrictHostKeyChecking=no', ROUTER]
+ROUTER    = sys.argv[3]
+SSH       = ['ssh', '-o', 'StrictHostKeyChecking=no', ROUTER]
 
 def make_tar_gz(base_dir, file_map):
     buf = io.BytesIO()
@@ -141,4 +139,4 @@ PYEOF
 
 echo ""
 echo "=== 安装完成 ==="
-echo "浏览器访问: http://localhost:8080"
+echo "浏览器访问: http://192.168.101.2"

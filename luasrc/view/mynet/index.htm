@@ -16,27 +16,26 @@
 
     <!-- ══════════ 0. 健康检查聚合 ══════════ -->
     <% if health_issues and #health_issues > 0 then %>
-    <div class="cbi-section mn-health-section">
+    <div class="cbi-section">
         <h3><%:System Status%></h3>
-        <div class="mn-health-list">
-        <% for _, issue in ipairs(health_issues) do %>
-            <div class="mn-health-item mn-health-<%=issue.level%>">
-                <span class="mn-health-icon">
-                <% if issue.level == "error" then %>&#10060;<% elseif issue.level == "warn" then %>&#9888;<% else %>&#10003;<% end %>
-                </span>
-                <span class="mn-health-text">
-                    <strong><%=pcdata(issue.title)%></strong>
-                    <% if issue.detail and issue.detail ~= "" then %>
-                    <span class="mn-muted mn-small"> — <%=pcdata(issue.detail)%></span>
-                    <% end %>
-                </span>
-                <% if issue.action_label and issue.action_api then %>
-                <button class="cbi-button cbi-button-action mn-health-btn"
-                    onclick="mnHealthFix('<%=pcdata(issue.action_api)%>',this)"><%=pcdata(issue.action_label)%></button>
-                <% end %>
-            </div>
-        <% end %>
+        <% for _, issue in ipairs(health_issues) do
+            local alert_cls = "warning"
+            if issue.level == "error" then alert_cls = "error" elseif issue.level == "ok" then alert_cls = "notice" end
+        %>
+        <div class="alert-message <%=alert_cls%>">
+            <strong><%=pcdata(issue.title)%></strong>
+            <% if issue.detail and issue.detail ~= "" then %>
+             — <span class="mn-muted"><%=pcdata(issue.detail)%></span>
+            <% end %>
+            <% if issue.action_link then %>
+            <a class="cbi-button cbi-button-action" style="margin-left:10px;padding:2px 12px;font-size:.85em"
+                href="<%=luci.dispatcher.build_url('admin/services/mynet/' .. issue.action_link)%><% if issue.action_query then %>?<%=issue.action_query%><% end %>"><%=pcdata(issue.action_label)%></a>
+            <% elseif issue.action_label and issue.action_api then %>
+            <button class="cbi-button cbi-button-action" style="margin-left:10px;padding:2px 12px;font-size:.85em"
+                onclick="mnHealthFix('<%=pcdata(issue.action_api)%>',this)"><%=pcdata(issue.action_label)%></button>
+            <% end %>
         </div>
+        <% end %>
     </div>
     <% end %>
 
@@ -46,7 +45,7 @@
         <table class="table">
             <tr class="tr">
                 <th class="th" style="width:10em"><%:Mode%></th>
-                <td class="td">
+                <td class="td" style="text-align:center">
                     <% if ri and ri.routing_mode then %>
                     <strong class="<% if ri.routing_mode:find('Gateway') then %>mn-running<% else %>mn-info-bypass<% end %>"><%=pcdata(ri.routing_mode)%></strong>
                     <% else %>—<% end %>
@@ -55,7 +54,7 @@
             <% if ri and ri.wan_iface and ri.wan_iface ~= "" then %>
             <tr class="tr">
                 <th class="th">WAN</th>
-                <td class="td"><code><%=pcdata(ri.wan_iface)%></code>
+                <td class="td" style="text-align:center"><code><%=pcdata(ri.wan_iface)%></code>
                     <% if ri.wan_ip and ri.wan_ip ~= "" then %>&nbsp;<span class="mn-muted"><%=pcdata(ri.wan_ip)%></span><% end %>
                     <% if ri.gateway and ri.gateway ~= "" then %>&emsp;<span class="mn-info-tag">GW</span>&nbsp;<code><%=pcdata(ri.gateway)%></code><% end %>
                 </td>
@@ -64,12 +63,12 @@
             <% if ri and ri.lan_ip and ri.lan_ip ~= "" then %>
             <tr class="tr">
                 <th class="th">LAN</th>
-                <td class="td"><code><%=pcdata(ri.lan_ip)%></code></td>
+                <td class="td" style="text-align:center"><code><%=pcdata(ri.lan_ip)%></code></td>
             </tr>
             <% end %>
             <tr class="tr">
                 <th class="th"><%:Firewall%></th>
-                <td class="td">
+                <td class="td" style="text-align:center">
                     <% if ri and ri.firewall then local fw = ri.firewall %>
                         <% if fw.mynet_zone_exists then %><span class="mn-dep-ok">zone ✓</span><% else %><span class="mn-dep-fail">zone ✗</span><% end %>
                         &nbsp;<% if fw.mynet_masq then %><span class="mn-dep-ok">masq ✓</span><% else %><span class="mn-dep-fail">masq ✗</span><% end %>
@@ -90,7 +89,7 @@
             </tr>
             <tr class="tr" id="mn-deps-row" data-gnb-ok="<%=gnb_ctl_ok and '1' or '0'%>">
                 <th class="th"><%:Deps%></th>
-                <td class="td">
+                <td class="td" style="text-align:center">
                     <span class="mn-dep-list" id="mn-dep-list">
                         <% if ri and ri.deps and #ri.deps > 0 then %>
                             <% local sys_deps_missing = false

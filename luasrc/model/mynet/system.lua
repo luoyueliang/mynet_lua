@@ -204,16 +204,12 @@ end
 -- 防火墙自动管理
 -- ─────────────────────────────────────────────────────────────
 
--- 查找 firewall.mynet 脚本路径
+-- firewall.mynet 脚本路径（ipk 安装时已部署到 scripts/）
 local function find_fw_script()
-    local paths = {
-        util.MYNET_HOME .. "/scripts/firewall.mynet",
-        util.MYNET_HOME .. "/scripts/_src/openwrt/runtime/firewall.mynet",
-        "/usr/share/mynet/firewall.mynet",
-    }
-    for _, p in ipairs(paths) do
-        if util.file_exists(p) then return p end
-    end
+    if util.file_exists(util.FIREWALL_SCRIPT) then return util.FIREWALL_SCRIPT end
+    -- 兼容旧路径
+    local alt = util.MYNET_HOME .. "/scripts/_src/openwrt/runtime/firewall.mynet"
+    if util.file_exists(alt) then return alt end
     return nil
 end
 
@@ -224,25 +220,15 @@ function M.ensure_firewall_zone()
     local zi = find_mynet_zone_index()
     if zi then return true, "zone already exists" end
 
-    -- 检查 network.mynet 是否存在
-    local net_check = uci_get("network.mynet")
-    if net_check == "" then
-        -- 尝试创建最小 network.mynet 接口
-        local dev_name = "gnb_tun"
-        util.exec("uci set network.mynet=interface 2>/dev/null")
-        util.exec("uci set network.mynet.proto='none' 2>/dev/null")
-        util.exec("uci set network.mynet.device='" .. dev_name .. "' 2>/dev/null")
-        util.exec("uci commit network 2>/dev/null")
-    end
-
     local fw_script = find_fw_script()
     if not fw_script then
         return false, "firewall.mynet script not found"
     end
 
+    -- install 会自动创建 network.mynet + zone + forwarding（不需要 --interface）
     local env = "MYNET_HOME=" .. util.MYNET_HOME
     local out, code = util.exec_status(
-        env .. " sh " .. fw_script .. " install --interface gnb_tun 2>&1")
+        env .. " sh " .. fw_script .. " install 2>&1")
     out = util.trim(out or "")
     if code == 0 then
         return true, out ~= "" and out or "firewall zone created"
@@ -633,7 +619,66 @@ function M.run_health_check(node_id, vpn_status, fw_info, deps)
         })
     end
 
-    -- 3. VPN 未运行
+    -- 3. 节点未配置
+    if not node_id or tostring(node_id) == "0" or tostring(node_id) == "" then
+        table.insert(issues, {
+            level  = "error",
+            title  = "Node not configured",
+            detail = "Go to Setup Wizard or GNB Standalone to configure this device",
+        })
+        return issues
+    end
+
+    -- 4. 配置文件完整性 + 一致性检查（仅在 node_id 已配置时）
+    local node_m = require("luci.model.mynet.node")
+    local pf = node_m.preflight_check(node_id)
+    if not pf.ok then
+        -- 分类: 一致性问题 vs 缺失问题
+        local missing = {}
+        local mismatch = {}
+        for _, c in ipairs(pf.checks) do
+            if not c.ok then
+                if c.name == "node_conf_id_match" or c.name == "route_conf_id_match" then
+                    table.insert(mismatch, c)
+                elseif c.name ~= "kmod_tun" and c.name ~= "gnb_binary" and c.name ~= "peer_keys" then
+                    table.insert(missing, c)
+                end
+            end
+        end
+
+        -- 配置不一致 → 引导 wizard
+        if #mismatch > 0 then
+            local details = {}
+            for _, c in ipairs(mismatch) do
+                details[#details + 1] = c.detail
+            end
+            table.insert(issues, {
+                level       = "error",
+                title       = "Config ID mismatch",
+                detail      = table.concat(details, "; "),
+                action_label = "Re-configure",
+                action_link = "wizard",
+            })
+        end
+
+        -- 配置文件缺失 → 引导 node 页
+        if #missing > 0 then
+            local names = {}
+            for _, c in ipairs(missing) do
+                names[#names + 1] = c.name
+            end
+            table.insert(issues, {
+                level       = "error",
+                title       = "Config files incomplete",
+                detail      = "Missing: " .. table.concat(names, ", "),
+                action_label = "Fix Config",
+                action_link = "node",
+                action_query = "tab=config",
+            })
+        end
+    end
+
+    -- 5. VPN 未运行（放在配置检查之后，配置完整才有意义）
     if vpn_status ~= "running" then
         table.insert(issues, {
             level        = "warn",
@@ -641,15 +686,6 @@ function M.run_health_check(node_id, vpn_status, fw_info, deps)
             detail       = "VPN tunnel is not active",
             action_label = "Start GNB",
             action_api   = "vpn_start",
-        })
-    end
-
-    -- 4. 节点未配置
-    if not node_id or tostring(node_id) == "0" or tostring(node_id) == "" then
-        table.insert(issues, {
-            level  = "error",
-            title  = "Node not configured",
-            detail = "Go to Setup Wizard or GNB Standalone to configure this device",
         })
     end
 

@@ -45,26 +45,50 @@ local function gen_node_conf(node_id, listen_port, name)
 end
 
 local function gen_route_conf(self_id, all_nodes)
+    local self_line = nil
     local lines = {}
     for _, n in ipairs(all_nodes) do
         -- GNB 需要 route.conf 包含所有节点（含自身），否则报 "miss local_node is NULL"
-        lines[#lines + 1] = string.format(
+        local l = string.format(
             "%d|%s|255.255.255.255", n.node_id, n.virtual_ip)
+        if n.node_id == self_id then
+            self_line = l
+        else
+            lines[#lines + 1] = l
+        end
+    end
+    -- 当前节点必须在第一行
+    if self_line then
+        table.insert(lines, 1, self_line)
     end
     return table.concat(lines, "\n") .. "\n"
 end
 
-local function gen_address_conf(self_node, local_node, listen_port)
-    if self_node.is_local then
-        return "# GNB 离线模式 — 本机节点\n"
-            .. string.format("# 监听 UDP %d, 等待客户端连接\n", listen_port)
-            .. "# 如需 index server: i|0|<IP>|<端口>\n"
+local function gen_address_conf(self_node, local_node, listen_port, index_addr)
+    local idx_host, idx_port = nil, nil
+    if index_addr and index_addr ~= "" then
+        idx_host, idx_port = index_addr:match("^([%w%.%-]+):(%d+)$")
     end
-    local lines = {
-        "# GNB 离线模式 — 远程节点",
-        "# 将 <ROUTER_IP> 替换为路由器的实际 IP 地址",
-    }
-    if local_node then
+
+    if self_node.is_local then
+        local lines = {
+            "# GNB 离线模式 — 本机节点",
+            string.format("# 监听 UDP %d, 等待客户端连接", listen_port),
+        }
+        if idx_host then
+            lines[#lines + 1] = string.format("i|0|%s|%s", idx_host, idx_port)
+        else
+            lines[#lines + 1] = "# 如需 index server: i|0|<IP>|<端口>"
+        end
+        return table.concat(lines, "\n") .. "\n"
+    end
+
+    local lines = {}
+    if idx_host then
+        lines[#lines + 1] = "# 通过 Index Server 发现节点，无需手动指定地址"
+        lines[#lines + 1] = string.format("i|0|%s|%s", idx_host, idx_port)
+    elseif local_node then
+        lines[#lines + 1] = "# 将 <ROUTER_IP> 替换为路由器的实际 IP 地址"
         lines[#lines + 1] = string.format(
             "n|%d|<ROUTER_IP>|%d", local_node.node_id, listen_port)
     end
@@ -72,7 +96,7 @@ local function gen_address_conf(self_node, local_node, listen_port)
 end
 
 -- 写入单个节点的全部配置（目录 + node/route/address/keys）
-local function write_node_configs(node, all_nodes, local_node, port, all_keys)
+local function write_node_configs(node, all_nodes, local_node, port, all_keys, index_addr)
     local nid_s    = tostring(node.node_id)
     local conf_dir = GNB_CONF_DIR .. "/" .. nid_s
 
@@ -85,7 +109,7 @@ local function write_node_configs(node, all_nodes, local_node, port, all_keys)
     util.write_file(conf_dir .. "/route.conf",
         gen_route_conf(node.node_id, all_nodes))
     util.write_file(conf_dir .. "/address.conf",
-        gen_address_conf(node, local_node, port))
+        gen_address_conf(node, local_node, port, index_addr))
 
     -- 自身密钥
     local kp = all_keys[node.node_id]
@@ -130,7 +154,7 @@ end
 
 -- ─────────────────────────────────────────────────────────────
 -- 初始化 Guest 网络
--- opts: { node_count, network_name, subnet, listen_port, local_index }
+-- opts: { node_count, network_name, subnet, listen_port, local_index, index_addr }
 -- 返回: guest_config, nil  |  nil, error_string
 -- ─────────────────────────────────────────────────────────────
 
@@ -145,6 +169,7 @@ function M.init_network(opts)
     local local_idx = tonumber(opts.local_index) or 1
     local netname   = opts.network_name or "MyNetwork"
     local start_id  = tonumber(opts.start_id) or DEFAULT_START_ID
+    local index_addr = opts.index_addr or "idx.mynet.club:9016"
 
     -- 输入校验
     if not subnet:match("^%d+%.%d+%.%d+$") then
@@ -181,7 +206,7 @@ function M.init_network(opts)
 
     -- 写入所有节点配置
     for _, n in ipairs(nodes) do
-        write_node_configs(n, nodes, local_node, port, all_keys)
+        write_node_configs(n, nodes, local_node, port, all_keys, index_addr)
     end
 
     -- 保存 guest.json
@@ -190,6 +215,7 @@ function M.init_network(opts)
         subnet        = subnet,
         listen_port   = port,
         local_node_id = local_node.node_id,
+        index_addr    = index_addr ~= "" and index_addr or nil,
         nodes         = nodes,
         created_at    = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -402,10 +428,11 @@ end
 -- 导入配置包 — 智能解压 + 验证一致性
 -- ─────────────────────────────────────────────────────────────
 
---- 解析 tar.gz，智能定位配置文件，验证一致性
--- @param tar_path  string  上传的 tar.gz 文件路径
+--- 解析配置包（tar.gz / tgz / gz / zip），智能定位配置文件，验证一致性
+-- @param tar_path  string  上传的压缩包路径
+-- @param filename  string  原始文件名（可选，用于检测格式）
 -- @return table preview_data, nil  |  nil, string error
-function M.import_preview(tar_path)
+function M.import_preview(tar_path, filename)
     if not util.file_exists(tar_path) then
         return nil, "file not found"
     end
@@ -414,15 +441,20 @@ function M.import_preview(tar_path)
     local tmp_dir = "/tmp/mynet_import_" .. os.time()
     os.execute("rm -rf '" .. tmp_dir .. "' && mkdir -p '" .. tmp_dir .. "'")
 
-    -- 列出 tar 内容
-    local listing = util.exec("tar tzf '" .. tar_path .. "' 2>&1") or ""
-    if listing == "" or listing:match("^tar:") then
-        os.execute("rm -rf '" .. tmp_dir .. "'")
-        return nil, "invalid or empty tar.gz"
+    -- 按格式解压
+    local ext = (filename or tar_path):lower()
+    local _, code
+    if ext:match("%.zip$") then
+        _, code = util.exec_status(
+            "unzip -o -q '" .. tar_path .. "' -d '" .. tmp_dir .. "' 2>&1")
+    else
+        _, code = util.exec_status(
+            "tar xzf '" .. tar_path .. "' -C '" .. tmp_dir .. "' 2>&1")
     end
-
-    -- 解压到临时目录
-    os.execute("tar xzf '" .. tar_path .. "' -C '" .. tmp_dir .. "' 2>/dev/null")
+    if code ~= 0 then
+        os.execute("rm -rf '" .. tmp_dir .. "'")
+        return nil, "failed to extract archive"
+    end
 
     -- 智能查找配置文件：在解压目录中递归搜索
     local function find_file(name)

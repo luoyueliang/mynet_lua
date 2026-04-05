@@ -51,25 +51,6 @@ define Package/luci-app-mynet/install
 	$(INSTALL_DIR) $(1)/etc/mynet/conf
 	$(INSTALL_CONF) ./root/etc/mynet/conf/config.json $(1)/etc/mynet/conf/
 
-	# --- Runtime scripts: _src/common ---
-	$(INSTALL_DIR) $(1)/etc/mynet/scripts/_src/common
-	$(INSTALL_BIN) ./scripts/_src/common/common.sh $(1)/etc/mynet/scripts/_src/common/
-	$(INSTALL_BIN) ./scripts/_src/common/route.sh $(1)/etc/mynet/scripts/_src/common/
-	$(INSTALL_BIN) ./scripts/_src/common/vpn.sh $(1)/etc/mynet/scripts/_src/common/
-
-	# --- Runtime scripts: _src/openwrt ---
-	$(INSTALL_DIR) $(1)/etc/mynet/scripts/_src/openwrt
-	$(INSTALL_BIN) ./scripts/_src/openwrt/service-manager.sh $(1)/etc/mynet/scripts/_src/openwrt/
-	$(INSTALL_DIR) $(1)/etc/mynet/scripts/_src/openwrt/runtime/modules
-	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/modules/firewall.sh \
-		$(1)/etc/mynet/scripts/_src/openwrt/runtime/modules/
-	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/modules/route.sh \
-		$(1)/etc/mynet/scripts/_src/openwrt/runtime/modules/
-	$(INSTALL_DATA) ./scripts/_src/openwrt/runtime/firewall.mynet \
-		$(1)/etc/mynet/scripts/_src/openwrt/runtime/
-	$(INSTALL_DATA) ./scripts/_src/openwrt/runtime/route.mynet \
-		$(1)/etc/mynet/scripts/_src/openwrt/runtime/
-
 	# --- Init script (rc.mynet → /etc/init.d/mynet) ---
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/rc.mynet $(1)/etc/init.d/mynet
@@ -94,10 +75,16 @@ define Package/luci-app-mynet/install
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) ./root/usr/sbin/mynet-fix-curl $(1)/usr/sbin/
 
+	# --- Deploy route.mynet / firewall.mynet to scripts/ (fixed path) ---
+	$(INSTALL_DIR) $(1)/etc/mynet/scripts
+	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/route.mynet \
+		$(1)/etc/mynet/scripts/
+	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/firewall.mynet \
+		$(1)/etc/mynet/scripts/
+
 	# --- Runtime directories (empty, needed at runtime) ---
 	$(INSTALL_DIR) $(1)/etc/mynet/logs
 	$(INSTALL_DIR) $(1)/etc/mynet/driver/gnb
-	$(INSTALL_DIR) $(1)/etc/mynet/scripts
 
 	# --- i18n translations ---
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
@@ -111,8 +98,12 @@ endef
 define Package/luci-app-mynet/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
+# Clean up legacy _src directory from older versions
+rm -rf /etc/mynet/scripts/_src
 # Enable and load tun module
 modprobe tun 2>/dev/null
+# Install firewall zone (creates network.mynet + zone + forwarding, no device binding yet)
+MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/firewall.mynet install 2>/dev/null
 # Clear LuCI cache
 rm -rf /tmp/luci-*
 # Enable mynet service (don't start — user needs to configure first)

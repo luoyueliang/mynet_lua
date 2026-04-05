@@ -81,14 +81,10 @@ local function auth_headers(token, zone_id)
     return h
 end
 
--- GET → JSON table
--- returns: (table, nil)  或  (nil, error_string)
-function M.get_json(base_url, endpoint, token, zone_id)
-    local url = base_url .. endpoint
-    local body, status, err = do_curl("GET", url, nil, auth_headers(token, zone_id))
+-- 解析 JSON 响应（公共逻辑，消除 get/post/patch/put 中的重复）
+local function parse_json_response(body, status, err)
     if err then return nil, err end
     if status == 0 then return nil, "connection failed (timeout or unreachable)" end
-
     local data = util.json_decode(body)
     if not data then
         return nil, string.format("invalid JSON (http=%d body=%s)", status, (body or ""):sub(1, 200))
@@ -99,22 +95,20 @@ function M.get_json(base_url, endpoint, token, zone_id)
     return data, nil
 end
 
+-- GET → JSON table
+-- returns: (table, nil)  或  (nil, error_string)
+function M.get_json(base_url, endpoint, token, zone_id)
+    local url = base_url .. endpoint
+    local body, status, err = do_curl("GET", url, nil, auth_headers(token, zone_id))
+    return parse_json_response(body, status, err)
+end
+
 -- POST JSON body → JSON table
 function M.post_json(base_url, endpoint, payload, token, zone_id)
     local url  = base_url .. endpoint
     local body_str = util.json_encode(payload) or "{}"
     local resp, status, err = do_curl("POST", url, body_str, auth_headers(token, zone_id))
-    if err then return nil, err end
-    if status == 0 then return nil, "connection failed" end
-
-    local data = util.json_decode(resp)
-    if not data then
-        return nil, string.format("invalid JSON (http=%d)", status)
-    end
-    if status >= 400 then
-        return nil, string.format("api error %d: %s", status, tostring(data.message or "unknown"))
-    end
-    return data, nil
+    return parse_json_response(resp, status, err)
 end
 
 -- PATCH JSON body → JSON table
@@ -122,17 +116,7 @@ function M.patch_json(base_url, endpoint, payload, token, zone_id)
     local url      = base_url .. endpoint
     local body_str = util.json_encode(payload) or "{}"
     local resp, status, err = do_curl("PATCH", url, body_str, auth_headers(token, zone_id))
-    if err then return nil, err end
-    if status == 0 then return nil, "connection failed" end
-
-    local data = util.json_decode(resp)
-    if not data then
-        return nil, string.format("invalid JSON (http=%d)", status)
-    end
-    if status >= 400 then
-        return nil, string.format("api error %d: %s", status, tostring(data.message or "unknown"))
-    end
-    return data, nil
+    return parse_json_response(resp, status, err)
 end
 
 -- PUT JSON body → JSON table
@@ -140,17 +124,7 @@ function M.put_json(base_url, endpoint, payload, token, zone_id)
     local url      = base_url .. endpoint
     local body_str = util.json_encode(payload) or "{}"
     local resp, status, err = do_curl("PUT", url, body_str, auth_headers(token, zone_id))
-    if err then return nil, err end
-    if status == 0 then return nil, "connection failed" end
-
-    local data = util.json_decode(resp)
-    if not data then
-        return nil, string.format("invalid JSON (http=%d)", status)
-    end
-    if status >= 400 then
-        return nil, string.format("api error %d: %s", status, tostring(data.message or "unknown"))
-    end
-    return data, nil
+    return parse_json_response(resp, status, err)
 end
 
 -- GET plain text（用于 render_conf=1 接口，直接返回配置文本）
@@ -166,6 +140,12 @@ function M.get_text(base_url, endpoint, token, zone_id)
     return util.trim(body or ""), nil
 end
 
+-- 将 base_url 的 API 版本替换为指定版本
+-- base_url 格式: https://host/api/v1 → https://host/api/v2
+local function versioned_base(base_url, version)
+    return (base_url:gsub("/api/v%d+$", "/api/" .. version))
+end
+
 -- ─────────────────────────────────────────────────────────────
 -- Config Bundle — 单次请求获取全部配置 + 密钥
 -- GET /api/v2/nodes/{id}/config-bundle
@@ -174,8 +154,8 @@ end
 -- fallback: 若 404 则返回 nil, "not_supported"
 -- ─────────────────────────────────────────────────────────────
 function M.get_config_bundle(base_url, node_id_str, token, zone_id)
-    local endpoint = "/api/v2/nodes/" .. node_id_str .. "/config-bundle"
-    local url = base_url .. endpoint
+    local endpoint = "/nodes/" .. node_id_str .. "/config-bundle"
+    local url = versioned_base(base_url, "v2") .. endpoint
     local body, status, err = do_curl("GET", url, nil, auth_headers(token, zone_id))
     if err then return nil, err end
     if status == 0 then return nil, "connection failed" end
@@ -192,7 +172,7 @@ end
 
 -- ─────────────────────────────────────────────────────────────
 -- 批量获取 peer 公钥
--- POST /nodes/{id}/router-keys
+-- POST /nodes/{id}/router-keys (v1)
 -- 返回: (keys_table, nil) 或 (nil, error_string)
 -- ─────────────────────────────────────────────────────────────
 function M.get_router_keys(base_url, node_id_str, token, zone_id)

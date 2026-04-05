@@ -143,6 +143,17 @@ function M.sync_top_route_conf(node_id)
     M.generate_network_conf(node_id)
 end
 
+-- Guest 模式：从 guest.json 的 index_addr 生成 address.conf 内容
+local function guest_address_text()
+    if cfg.get_mode() ~= "guest" then return nil end
+    local guest_m = require("luci.model.mynet.guest")
+    local g = guest_m.load_config()
+    if not g or not g.index_addr or g.index_addr == "" then return nil end
+    local host, port = g.index_addr:match("^([%w%.%-]+):(%d+)$")
+    if not host then return nil end
+    return string.format("i|0|%s|%s", host, port)
+end
+
 -- ─────────────────────────────────────────────────────────────
 -- 刷新配置：下载并写入 node.conf、route.conf、address.conf
 -- 对应 Go: cmd/refresh_config.go 的核心流程
@@ -181,18 +192,30 @@ function M.refresh_configs(node_id)
         if ok then
             results.files[#results.files+1] = route_path
             M.sync_top_route_conf(node_id)
+            -- proxy route re-inject（route.conf 被全量覆写后需重新注入）
+            local proxy_m = require("luci.model.mynet.proxy")
+            local pcfg = proxy_m.load_config()
+            if pcfg.proxy_enabled then
+                proxy_m.route_inject()
+            end
         else
             results.ok = false
             results.errors[#results.errors+1] = "write route.conf: " .. (we or "")
         end
     end
 
-    -- 3. address.conf（非致命，部分区域无服务地址）
+    -- 3. address.conf（guest 模式用本地 index_addr，否则从 API 拉取）
     local addr_path = string.format("%s/%s/address.conf", util.GNB_CONF_DIR, nid(node_id))
-    local svc_text, err3 = M.get_services_index()
-    if err3 then
-        util.log_warn("refresh_configs: address.conf: " .. err3)
-    elseif svc_text and svc_text ~= "" then
+    local svc_text = guest_address_text()
+    if not svc_text then
+        local err3
+        svc_text, err3 = M.get_services_index()
+        if err3 then
+            util.log_warn("refresh_configs: address.conf: " .. err3)
+            svc_text = nil
+        end
+    end
+    if svc_text and svc_text ~= "" then
         local ok, we = util.write_file(addr_path, svc_text .. "\n")
         if ok then
             results.files[#results.files+1] = addr_path
@@ -248,6 +271,11 @@ function M.refresh_configs_bundle(node_id)
         ["route.conf"]   = string.format("%s/%s/route.conf", util.GNB_CONF_DIR, self_nid),
         ["address.conf"] = string.format("%s/%s/address.conf", util.GNB_CONF_DIR, self_nid),
     }
+    -- Guest 模式：address.conf 用本地 index_addr，不用 API 返回的空内容
+    local guest_addr = guest_address_text()
+    if guest_addr then
+        files["address.conf"] = guest_addr
+    end
     for fname, dest in pairs(file_map) do
         local content = files[fname]
         if content and content ~= "" then
@@ -256,6 +284,12 @@ function M.refresh_configs_bundle(node_id)
                 results.files[#results.files + 1] = dest
                 if fname == "route.conf" then
                     M.sync_top_route_conf(node_id)
+                    -- proxy route re-inject
+                    local proxy_m = require("luci.model.mynet.proxy")
+                    local pcfg = proxy_m.load_config()
+                    if pcfg.proxy_enabled then
+                        proxy_m.route_inject()
+                    end
                 end
             else
                 results.ok = false
@@ -433,16 +467,25 @@ function M.get_peer_keys(node_id)
     return result
 end
 
+-- Proxy marker constants（与 proxy.lua / hooks/stop.sh 统一）
+local PROXY_MARKER_BEGIN = "#----proxy start----"
+local PROXY_MARKER_END   = "#----proxy end----"
+
 -- ─────────────────────────────────────────────────────────────
 -- 从 route.conf 内容中提取对端节点 ID 列表（格式: nodeID|network|netmask）
--- 排除自身节点 ID，去重
+-- 排除自身节点 ID，去重；跳过 proxy marker 段
 -- ─────────────────────────────────────────────────────────────
 local function extract_peer_ids_from_route(route_content, self_nid)
     local seen  = {}
     local peers = {}
+    local skipping = false
     for line in (route_content .. "\n"):gmatch("([^\n]*)\n") do
         line = line:match("^%s*(.-)%s*$")  -- trim
-        if line ~= "" and not line:match("^#") then
+        if line:find(PROXY_MARKER_BEGIN, 1, true) then
+            skipping = true
+        elseif line:find(PROXY_MARKER_END, 1, true) then
+            skipping = false
+        elseif not skipping and line ~= "" and not line:match("^#") then
             local peer_id = line:match("^([^|]+)|")
             if peer_id then
                 peer_id = peer_id:match("^%s*(.-)%s*$")
@@ -462,9 +505,14 @@ end
 -- ─────────────────────────────────────────────────────────────
 local function parse_gnb_route_conf(content)
     local entries = {}
+    local skipping = false
     for line in (content .. "\n"):gmatch("([^\n]*)\n") do
         line = line:match("^%s*(.-)%s*$")
-        if line ~= "" and not line:match("^#") then
+        if line:find(PROXY_MARKER_BEGIN, 1, true) then
+            skipping = true
+        elseif line:find(PROXY_MARKER_END, 1, true) then
+            skipping = false
+        elseif not skipping and line ~= "" and not line:match("^#") then
             local parts = {}
             for p in line:gmatch("[^|]+") do
                 parts[#parts + 1] = p:match("^%s*(.-)%s*$")
@@ -642,8 +690,12 @@ function M.refresh_single_config(node_id, config_type)
 
     elseif config_type == "address" then
         local addr_path  = string.format("%s/%s/address.conf", util.GNB_CONF_DIR, nid(node_id))
-        local text, err  = M.get_services_index()
-        if err then return { ok = false, file = addr_path, error = err } end
+        local text = guest_address_text()
+        if not text then
+            local err
+            text, err = M.get_services_index()
+            if err then return { ok = false, file = addr_path, error = err } end
+        end
         local ok, we = util.write_file(addr_path, (text or "") .. "\n")
         return { ok = ok, file = addr_path, error = we }
 
@@ -669,18 +721,18 @@ function M.get_vpn_service_status()
 end
 
 function M.start_vpn()
-    local _, code = util.exec_status("/etc/init.d/mynet start")
-    return code == 0, code
+    local output, code = util.exec_status("/etc/init.d/mynet start 2>&1")
+    return output, code
 end
 
 function M.stop_vpn()
-    local _, code = util.exec_status("/etc/init.d/mynet stop")
-    return code == 0, code
+    local output, code = util.exec_status("/etc/init.d/mynet stop 2>&1")
+    return output, code
 end
 
 function M.restart_vpn()
-    local _, code = util.exec_status("/etc/init.d/mynet restart")
-    return code == 0, code
+    local output, code = util.exec_status("/etc/init.d/mynet restart 2>&1")
+    return output, code
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -753,17 +805,50 @@ function M.preflight_check(node_id)
         node_conf == "" and "missing: " .. node_conf_path
         or (not has_nodeid and "no 'nodeid' in node.conf" or "ok"))
 
+    -- 2b. node.conf nodeid 与当前 node_id 一致性
+    local conf_nid_str = node_conf:match("nodeid%s+(%d+)")
+    if conf_nid_str and conf_nid_str ~= n then
+        add("node_conf_id_match", false,
+            "node.conf nodeid=" .. conf_nid_str .. " but current node is #" .. n)
+    end
+
     -- 3. route.conf 存在（非空）
     local route_path = string.format("%s/%s/route.conf", util.GNB_CONF_DIR, n)
     local route_conf = util.read_file(route_path) or ""
     add("route_conf", route_conf ~= "",
         route_conf == "" and "missing: " .. route_path or "ok")
 
-    -- 4. address.conf 有 index server
+    -- 3b. route.conf 第一条记录的 nodeid 与当前 node_id 一致性
+    if route_conf ~= "" then
+        for line in route_conf:gmatch("[^\n]+") do
+            local stripped = line:gsub("#.*$", ""):match("^%s*(.-)%s*$")
+            if stripped ~= "" then
+                local first_field = stripped:match("^([^|]+)")
+                if first_field then
+                    first_field = first_field:match("^%s*(.-)%s*$")
+                    if first_field ~= n then
+                        add("route_conf_id_match", false,
+                            "route.conf first node=" .. first_field .. " but current node is #" .. n)
+                    end
+                end
+                break
+            end
+        end
+    end
+
+    -- 4. address.conf 至少包含一条有效记录（非空非注释行）
     local addr_path = string.format("%s/%s/address.conf", util.GNB_CONF_DIR, n)
     local addr_conf = util.read_file(addr_path) or ""
-    add("address_conf", addr_conf ~= "",
-        addr_conf == "" and "missing (non-fatal): " .. addr_path or "ok")
+    local addr_has_record = false
+    for line in addr_conf:gmatch("[^\r\n]+") do
+        local trimmed = line:match("^%s*(.-)%s*$")
+        if trimmed ~= "" and trimmed:sub(1, 1) ~= "#" then
+            addr_has_record = true
+            break
+        end
+    end
+    add("address_conf", addr_has_record,
+        not addr_has_record and "no valid records in " .. addr_path or "ok")
 
     -- 5. 私钥存在（128 hex chars）
     local priv_path = string.format("%s/%s/security/%s.private", util.GNB_CONF_DIR, n, n)
@@ -771,6 +856,13 @@ function M.preflight_check(node_id)
     local priv_ok   = #priv_hex == 128 and priv_hex:match("^[0-9a-fA-F]+$") ~= nil
     add("private_key", priv_ok,
         not priv_ok and "missing or invalid: " .. priv_path or "ok")
+
+    -- 5b. 公钥存在（64 hex chars）
+    local pub_path = string.format("%s/%s/security/%s.public", util.GNB_CONF_DIR, n, n)
+    local pub_hex  = util.trim(util.read_file(pub_path) or "")
+    local pub_ok   = #pub_hex == 64 and pub_hex:match("^[0-9a-fA-F]+$") ~= nil
+    add("public_key", pub_ok,
+        not pub_ok and "missing or invalid: " .. pub_path or "ok")
 
     -- 6. 至少一个 peer 公钥
     local ed_dir = string.format("%s/%s/ed25519", util.GNB_CONF_DIR, n)
@@ -1195,6 +1287,144 @@ function M.upload_public_key(node_id, pub_hex)
     if not data or not data.success then
         return nil, (data and data.message) or "upload public key failed"
     end
+    return true, nil
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- 导入配置包 — 支持 tar.gz / tgz / gz / zip
+-- ─────────────────────────────────────────────────────────────
+
+--- 解压配置包到临时目录并验证内容
+-- @param archive_path string  上传的压缩包路径（/tmp/ 下）
+-- @param filename     string  原始文件名（用于检测格式）
+-- @return table preview, nil | nil, string error
+function M.import_preview(archive_path, filename)
+    if not util.file_exists(archive_path) then
+        return nil, "file not found"
+    end
+
+    local ext = (filename or ""):lower()
+    local tmp_dir = "/tmp/mynet_node_import_" .. os.time()
+    os.execute("rm -rf '" .. tmp_dir .. "' && mkdir -p '" .. tmp_dir .. "'")
+
+    -- 按后缀解压
+    local _, code
+    if ext:match("%.zip$") then
+        _, code = util.exec_status(
+            "unzip -o -q '" .. archive_path .. "' -d '" .. tmp_dir .. "' 2>&1")
+    else
+        -- tar.gz / tgz / gz 统一用 tar xzf
+        _, code = util.exec_status(
+            "tar xzf '" .. archive_path .. "' -C '" .. tmp_dir .. "' 2>&1")
+    end
+    if code ~= 0 then
+        os.execute("rm -rf '" .. tmp_dir .. "'")
+        return nil, "failed to extract archive"
+    end
+
+    -- 递归搜索配置文件
+    local function find_file(name)
+        local r = util.trim(util.exec(
+            "find '" .. tmp_dir .. "' -name '" .. name .. "' -type f 2>/dev/null | head -1") or "")
+        return r ~= "" and r or nil
+    end
+
+    local node_conf_path = find_file("node.conf")
+    if not node_conf_path then
+        os.execute("rm -rf '" .. tmp_dir .. "'")
+        return nil, "node.conf not found in archive"
+    end
+
+    -- 从 node.conf 提取 nodeid
+    local node_content = util.read_file(node_conf_path) or ""
+    local nodeid_str = node_content:match("^%s*nodeid%s+(%d+)")
+                    or node_content:match("\n%s*nodeid%s+(%d+)")
+    if not nodeid_str then
+        os.execute("rm -rf '" .. tmp_dir .. "'")
+        return nil, "node.conf missing 'nodeid' line"
+    end
+
+    local has_route   = find_file("route.conf") ~= nil
+    local has_address = find_file("address.conf") ~= nil
+    local has_private = find_file(nodeid_str .. ".private") ~= nil
+    local has_public  = find_file(nodeid_str .. ".public") ~= nil
+
+    -- 统计对端公钥
+    local peer_count = 0
+    local ed_result = util.exec(
+        "find '" .. tmp_dir .. "' -path '*/ed25519/*.public' -type f 2>/dev/null") or ""
+    for _ in ed_result:gmatch("[^\n]+") do
+        peer_count = peer_count + 1
+    end
+
+    -- 是否与当前节点不同
+    local cur_nid = cfg.get_node_id()
+    local cur_nid_str = cur_nid and util.int_str(cur_nid) or "0"
+    local is_different_node = (cur_nid_str ~= "0" and cur_nid_str ~= nodeid_str)
+
+    return {
+        tmp_dir          = tmp_dir,
+        node_id          = nodeid_str,
+        has_node_conf    = true,
+        has_route        = has_route,
+        has_address      = has_address,
+        has_private_key  = has_private,
+        has_public_key   = has_public,
+        peer_key_count   = peer_count,
+        is_different_node = is_different_node,
+        current_node_id  = cur_nid_str,
+    }, nil
+end
+
+--- 确认导入：将临时目录中的文件复制到 GNB 配置目录
+-- @param tmp_dir  string  import_preview 返回的临时目录
+-- @param node_id  string  节点 ID（字符串）
+-- @return bool, string|nil
+function M.import_apply(tmp_dir, node_id)
+    if not tmp_dir or not util.file_exists(tmp_dir) then
+        return false, "temp dir not found (expired?)"
+    end
+    local nid_s    = tostring(node_id)
+    local conf_dir = util.GNB_CONF_DIR .. "/" .. nid_s
+
+    os.execute("mkdir -p '" .. conf_dir .. "/security'")
+    os.execute("mkdir -p '" .. conf_dir .. "/ed25519'")
+
+    local function copy_found(name, dest)
+        local src = util.trim(util.exec(
+            "find '" .. tmp_dir .. "' -name '" .. name .. "' -type f 2>/dev/null | head -1") or "")
+        if src ~= "" then
+            os.execute("cp -f '" .. src .. "' '" .. dest .. "'")
+            return true
+        end
+        return false
+    end
+
+    copy_found("node.conf",    conf_dir .. "/node.conf")
+    copy_found("route.conf",   conf_dir .. "/route.conf")
+    copy_found("address.conf", conf_dir .. "/address.conf")
+    copy_found(nid_s .. ".private", conf_dir .. "/security/" .. nid_s .. ".private")
+    copy_found(nid_s .. ".public",  conf_dir .. "/security/" .. nid_s .. ".public")
+    os.execute("chmod 600 '" .. conf_dir .. "/security/" .. nid_s .. ".private' 2>/dev/null")
+
+    -- 复制自身公钥到 ed25519/ 目录
+    copy_found(nid_s .. ".public", conf_dir .. "/ed25519/" .. nid_s .. ".public")
+
+    -- 复制对端公钥
+    local ed_files = util.exec(
+        "find '" .. tmp_dir .. "' -path '*/ed25519/*.public' -type f 2>/dev/null") or ""
+    for ed_path in ed_files:gmatch("[^\n]+") do
+        local fname = ed_path:match("([^/]+%.public)$")
+        if fname then
+            os.execute("cp -f '" .. ed_path .. "' '" .. conf_dir .. "/ed25519/" .. fname .. "'")
+        end
+    end
+
+    -- 更新 mynet.conf（设置 NODE_ID）
+    cfg.generate_mynet_conf(tonumber(node_id))
+
+    -- 清理临时目录
+    os.execute("rm -rf '" .. tmp_dir .. "'")
     return true, nil
 end
 

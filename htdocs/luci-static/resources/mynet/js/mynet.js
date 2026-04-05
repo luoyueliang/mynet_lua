@@ -44,6 +44,14 @@ function mnFetch(url, method, params, onOk, onErr) {
         });
 }
 
+/* ─── 基础工具 ────────────────────────────────────────────── */
+
+/** 简单 HTML 转义 */
+function _esc(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /* ─── Toast 通知 ─────────────────────────────────────────── */
 
 var _toastTimer = null;
@@ -51,19 +59,33 @@ var _toastTimer = null;
 /**
  * mnShowToast — 显示底部弹窗通知
  * @param {string} msg   - 消息内容
- * @param {string} type  - '' (默认) 或 'error'
+ * @param {string} type  - '' (默认/success) 或 'error'
+ * @param {object} opts  - { duration: ms, detail: string }
  */
-function mnShowToast(msg, type) {
+function mnShowToast(msg, type, opts) {
     var el = document.getElementById('mn-toast');
     if (!el) return;
+    opts = opts || {};
 
-    el.textContent = msg;
-    el.className = 'mn-toast' + (type === 'error' ? ' mn-toast-error' : '');
+    var html = '<div class="mn-toast-msg">' + _esc(msg) + '</div>';
+    if (opts.detail) {
+        html += '<div class="mn-toast-detail">' + _esc(opts.detail).substring(0, 200) + '</div>';
+    }
+    el.innerHTML = html;
+
+    if (type === 'error') {
+        el.className = 'mn-toast mn-toast-error';
+    } else if (type === 'success') {
+        el.className = 'mn-toast mn-toast-success';
+    } else {
+        el.className = 'mn-toast';
+    }
 
     if (_toastTimer) clearTimeout(_toastTimer);
+    var duration = opts.duration || (type === 'error' ? 8000 : 3500);
     _toastTimer = setTimeout(function () {
         el.classList.add('mn-hidden');
-    }, 3500);
+    }, duration);
 }
 
 /* ─── GNB 控制 ───────────────────────────────────────────── */
@@ -77,11 +99,11 @@ var _mnApiLastCall = {};
 var _MN_API_DEBOUNCE_MS = 1000;
 
 /**
- * mnApi — 通用 GNB 操作（start / stop / restart）
- * 内置防抖 + 去重：同一 action 在请求中或距上次调用 <1s 时忽略
- * @param {string} action  - 'vpn_start' | 'vpn_stop' | 'vpn_restart'
+ * mnApi — 通用 API 操作（start / stop / restart / fw_setup 等）
+ * 内置防抖 + 去重 + 按钮加载状态 + 错误引导 + 成功刷新
+ * @param {string} action  - API action 名
  * @param {object} params  - 附加参数（可 null）
- * @param {HTMLElement} btn - 触发按钮（用于禁用/恢复）
+ * @param {HTMLElement} btn - 触发按钮（用于禁用/恢复 + 加载动画）
  */
 function mnApi(action, params, btn) {
     var now = Date.now();
@@ -96,27 +118,51 @@ function mnApi(action, params, btn) {
     }
     _mnApiInflight[action] = true;
     _mnApiLastCall[action] = now;
-    if (btn) btn.disabled = true;
+
+    /* 按钮加载状态 */
+    var btnOrigText = '';
+    if (btn) {
+        btn.disabled = true;
+        btnOrigText = btn.textContent;
+        btn.setAttribute('data-mn-orig', btnOrigText);
+        btn.innerHTML = '<span class="mn-btn-spinner"></span>' + btnOrigText;
+        btn.classList.add('mn-btn-loading');
+    }
 
     var url = _mnApiBase() + action;
 
     mnFetch(url, 'POST', params || {},
         function (data) {
             _mnApiInflight[action] = false;
-            if (btn) btn.disabled = false;
+            _mnBtnRestore(btn);
             if (data.success) {
-                mnShowToast(data.message || 'OK');
-                setTimeout(mnRefreshStatus, 1500);
+                mnShowToast(data.message || 'OK', 'success');
+                /* 成功后刷新状态，稍后刷新页面使信息同步 */
+                mnRefreshStatus();
+                setTimeout(function () { window.location.reload(); }, 2000);
             } else {
-                mnShowToast((data.message || 'Error'), 'error');
+                mnShowToast(
+                    data.message || 'Operation failed',
+                    'error',
+                    { detail: data.detail || '', duration: 10000 }
+                );
             }
         },
         function (err) {
             _mnApiInflight[action] = false;
-            if (btn) btn.disabled = false;
-            mnShowToast(err, 'error');
+            _mnBtnRestore(btn);
+            mnShowToast('Network error: ' + err, 'error', { duration: 8000 });
         }
     );
+}
+
+/** _mnBtnRestore — 恢复按钮原始状态 */
+function _mnBtnRestore(btn) {
+    if (!btn) return;
+    btn.disabled = false;
+    btn.classList.remove('mn-btn-loading');
+    var orig = btn.getAttribute('data-mn-orig');
+    if (orig) btn.textContent = orig;
 }
 
 /* ─── 状态轮询 ───────────────────────────────────────────── */
@@ -610,6 +656,7 @@ function _mnFmtBytes(b) {
 }
 
 function _mnFmtUptime(sec) {
+    if (!sec || sec <= 0) return '-';
     var d = Math.floor(sec / 86400);
     var h = Math.floor((sec % 86400) / 3600);
     var m = Math.floor((sec % 3600) / 60);
@@ -743,17 +790,4 @@ function mnRunDiagnose() {
     );
 }
 
-/** 简单 HTML 转义 */
-function _esc(s) {
-    if (!s) return '';
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-/* ─── 节点页：刷新全部配置 ───────────────────────────────── */
-
-function mnNodeRefreshAll() {
-    var types = ['address', 'route', 'node'];
-    for (var i = 0; i < types.length; i++) {
-        mnNodeRefreshConfig(types[i]);
-    }
-}
+/* mnNodeRefreshAll: 使用上方 L363 的完整实现（POST node_config type=all） */

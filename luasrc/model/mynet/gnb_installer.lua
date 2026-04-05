@@ -331,24 +331,13 @@ local function pcall_safe(f, ...)
     return nil
 end
 
--- json_decode: 优先使用 luci.jsonc，fallback 到 util 自带
-local function json_decode(s)
-    local ok, jsonc = pcall(require, "luci.jsonc")
-    if ok and jsonc then
-        local r = pcall_safe(jsonc.parse, s)
-        if r then return r end
-    end
-    -- fallback: util.json_decode (自带简单解析)
-    return util.json_decode(s)
-end
-
 -- fetch_apps_index: 下载并解析 apps.json
 -- 返回 (table, nil) 或 (nil, errstr)
 function M.fetch_apps_index(apps_url)
     apps_url = apps_url or M.APPS_INDEX
     local body, err = fetch_url(apps_url, 15)
     if not body then return nil, err end
-    local data = json_decode(body)
+    local data = util.json_decode(body)
     if not data or type(data.apps) ~= "table" then
         return nil, "apps.json missing 'apps' field"
     end
@@ -359,7 +348,7 @@ end
 function M.fetch_gnb_manifest(manifest_url)
     local body, err = fetch_url(manifest_url, 15)
     if not body then return nil, err end
-    local data = json_decode(body)
+    local data = util.json_decode(body)
     if not data then return nil, "failed to parse manifest" end
     return data, nil
 end

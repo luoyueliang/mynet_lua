@@ -1,0 +1,184 @@
+name: Build & Release IPK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Determine version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Building version: $TAG"
+
+      - name: Build IPK package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PKG_NAME="luci-app-mynet"
+          PKG_FILE="${PKG_NAME}_${VERSION}-1_all.ipk"
+          STAGING="$(mktemp -d)"
+
+          echo "==> Creating package structure..."
+
+          # --- data.tar.gz ---
+          DATA_ROOT="${STAGING}/data"
+          mkdir -p "${DATA_ROOT}"
+
+          # LuCI controller
+          install -Dm644 luasrc/controller/mynet.lua \
+            "${DATA_ROOT}/usr/lib/lua/luci/controller/mynet.lua"
+
+          # LuCI models
+          mkdir -p "${DATA_ROOT}/usr/lib/lua/luci/model/mynet"
+          install -m644 luasrc/model/mynet/*.lua \
+            "${DATA_ROOT}/usr/lib/lua/luci/model/mynet/"
+
+          # LuCI views (only active templates)
+          mkdir -p "${DATA_ROOT}/usr/lib/lua/luci/view/mynet"
+          for f in index wizard login guest node service plugin proxy settings \
+                   status node_manager log diagnose; do
+            if [ -f "luasrc/view/mynet/${f}.htm" ]; then
+              install -m644 "luasrc/view/mynet/${f}.htm" \
+                "${DATA_ROOT}/usr/lib/lua/luci/view/mynet/"
+            fi
+          done
+
+          # Static assets
+          install -Dm644 htdocs/luci-static/resources/mynet/css/mynet.css \
+            "${DATA_ROOT}/www/luci-static/resources/mynet/css/mynet.css"
+          install -Dm644 htdocs/luci-static/resources/mynet/js/mynet.js \
+            "${DATA_ROOT}/www/luci-static/resources/mynet/js/mynet.js"
+
+          # Default config
+          install -Dm644 root/etc/mynet/conf/config.json \
+            "${DATA_ROOT}/etc/mynet/conf/config.json"
+
+          # Init script
+          install -Dm755 scripts/_src/openwrt/runtime/rc.mynet \
+            "${DATA_ROOT}/etc/init.d/mynet"
+
+          # Runtime scripts
+          install -Dm755 scripts/_src/openwrt/runtime/route.mynet \
+            "${DATA_ROOT}/etc/mynet/scripts/route.mynet"
+          install -Dm755 scripts/_src/openwrt/runtime/firewall.mynet \
+            "${DATA_ROOT}/etc/mynet/scripts/firewall.mynet"
+
+          # Proxy scripts
+          mkdir -p "${DATA_ROOT}/etc/mynet/scripts/proxy/hooks"
+          mkdir -p "${DATA_ROOT}/etc/mynet/scripts/proxy/openwrt"
+          install -m755 scripts/proxy/proxy.sh \
+            "${DATA_ROOT}/etc/mynet/scripts/proxy/"
+          install -m755 scripts/proxy/hooks/*.sh \
+            "${DATA_ROOT}/etc/mynet/scripts/proxy/hooks/"
+          install -m755 scripts/proxy/openwrt/route_policy.sh \
+            "${DATA_ROOT}/etc/mynet/scripts/proxy/openwrt/"
+
+          # Tools
+          mkdir -p "${DATA_ROOT}/etc/mynet/scripts/tools"
+          install -m755 scripts/tools/*.sh \
+            "${DATA_ROOT}/etc/mynet/scripts/tools/"
+
+          # curl fix helper
+          install -Dm755 root/usr/sbin/mynet-fix-curl \
+            "${DATA_ROOT}/usr/sbin/mynet-fix-curl"
+
+          # Logrotate config
+          if [ -f root/etc/logrotate.d/mynet ]; then
+            install -Dm644 root/etc/logrotate.d/mynet \
+              "${DATA_ROOT}/etc/logrotate.d/mynet"
+          fi
+
+          # Runtime directories
+          mkdir -p "${DATA_ROOT}/etc/mynet/logs"
+          mkdir -p "${DATA_ROOT}/etc/mynet/driver/gnb"
+
+          # i18n translations
+          mkdir -p "${DATA_ROOT}/usr/lib/lua/luci/i18n"
+          for pofile in po/*/mynet.po; do
+            lang="$(basename "$(dirname "$pofile")")"
+            if [ "$lang" != "templates" ]; then
+              python3 tools/po2lmo.py "$pofile" \
+                "${DATA_ROOT}/usr/lib/lua/luci/i18n/mynet.${lang}.lmo"
+            fi
+          done
+
+          echo "==> Creating data.tar.gz..."
+          (cd "${DATA_ROOT}" && tar czf "${STAGING}/data.tar.gz" .)
+
+          # --- control.tar.gz ---
+          CTRL_DIR="${STAGING}/control"
+          mkdir -p "${CTRL_DIR}"
+
+          cat > "${CTRL_DIR}/control" <<CTRL
+Package: ${PKG_NAME}
+Version: ${VERSION}-1
+Depends: luci-base, curl, luci-lib-jsonc, bash, kmod-tun
+Section: luci
+Architecture: all
+Installed-Size: $(du -sk "${DATA_ROOT}" | cut -f1)
+Description: MyNet VPN management interface for OpenWrt LuCI
+CTRL
+
+          printf '/etc/mynet/conf/config.json\n' > "${CTRL_DIR}/conffiles"
+
+          cat > "${CTRL_DIR}/postinst" <<'POSTINST'
+#!/bin/sh
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+rm -rf /etc/mynet/scripts/_src
+modprobe tun 2>/dev/null
+MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/firewall.mynet install 2>/dev/null
+rm -rf /tmp/luci-*
+/etc/init.d/mynet enable 2>/dev/null
+exit 0
+POSTINST
+          chmod 755 "${CTRL_DIR}/postinst"
+
+          cat > "${CTRL_DIR}/prerm" <<'PRERM'
+#!/bin/sh
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+/etc/init.d/mynet stop 2>/dev/null
+/etc/init.d/mynet disable 2>/dev/null
+exit 0
+PRERM
+          chmod 755 "${CTRL_DIR}/prerm"
+
+          echo "==> Creating control.tar.gz..."
+          (cd "${CTRL_DIR}" && tar czf "${STAGING}/control.tar.gz" .)
+
+          # --- debian-binary ---
+          echo "2.0" > "${STAGING}/debian-binary"
+
+          # --- Assemble IPK (ar archive) ---
+          echo "==> Assembling ${PKG_FILE}..."
+          (cd "${STAGING}" && ar rc "${GITHUB_WORKSPACE}/${PKG_FILE}" \
+            debian-binary control.tar.gz data.tar.gz)
+
+          echo "pkg_file=${PKG_FILE}" >> "$GITHUB_OUTPUT"
+          echo "==> Built: ${PKG_FILE} ($(du -h "${GITHUB_WORKSPACE}/${PKG_FILE}" | cut -f1))"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.version.outputs.pkg_file || format('luci-app-mynet_{0}-1_all.ipk', steps.version.outputs.version) }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

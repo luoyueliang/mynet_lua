@@ -6,10 +6,8 @@
 
 <%
 -- 辅助：node_id 格式化为整数字符串
-local function nid_fmt(v)
-    if type(v) == "number" then return string.format("%.0f", v) end
-    return tostring(v or 0)
-end
+local util_m = require("luci.model.mynet.util")
+local nid_fmt = util_m.nid_fmt
 local cur_nid_str = nid_fmt(node_id)
 local vpn_running = (vpn_status == "running")
 
@@ -79,19 +77,7 @@ local list_base = luci.dispatcher.build_url('admin/services/mynet/node') .. '?ta
 <div class="cbi-section">
     <h3><%:Current Node%></h3>
     <div class="mn-section-body">
-    <!-- Zone 行：仅非 guest 模式显示 -->
-    <% if not is_guest then %>
-    <div style="margin-bottom:6px;display:flex;align-items:center;gap:8px;">
-        <span class="mn-muted mn-small"><%:Group%>:</span>
-        <% if zone and zone.zone_name and zone.zone_name ~= "" then %>
-        <span class="mn-badge"><%=pcdata(zone.zone_name)%></span>
-        <a href="<%=luci.dispatcher.build_url('admin/services/mynet/wizard?tab=zone')%>"><%:Change Group%></a>
-        <% else %>
-        <span class="mn-muted mn-small"><%:not selected%></span>
-        <a href="<%=luci.dispatcher.build_url('admin/services/mynet/wizard?tab=zone')%>"><%:Select Group%></a>
-        <% end %>
-    </div>
-    <% end %>
+
 
     <% if cur_nid_str == "0" or cur_nid_str == "" then %>
     <div class="alert-message warning">
@@ -103,7 +89,14 @@ local list_base = luci.dispatcher.build_url('admin/services/mynet/node') .. '?ta
     <table class="table" style="width:100%">
         <tr class="tr">
             <th class="th" style="width:10em"><%:Node ID%></th>
-            <td class="td"><code>#<%=cur_nid_str%></code></td>
+            <td class="td">
+                <code>#<%=cur_nid_str%></code>
+                <% if not is_guest then %>
+                &nbsp;<a class="mn-muted mn-small" href="<%=luci.dispatcher.build_url('admin/services/mynet/wizard')%>?tab=zone">&#8644; <%:Change Node%></a>
+                <% else %>
+                &nbsp;<a class="mn-muted mn-small" href="<%=luci.dispatcher.build_url('admin/services/mynet/guest')%>">&#8644; <%:Change Node%></a>
+                <% end %>
+            </td>
         </tr>
         <% if node_info then %>
         <tr class="tr">
@@ -209,6 +202,10 @@ local has_node = (cur_nid_str ~= "0" and cur_nid_str ~= "")
             <% if has_node then %>
             <span class="mn-muted mn-small"><%:Node%> #<%=cur_nid_str%></span>
             <% end %>
+            <input type="file" id="mn-import-file" accept=".tar.gz,.tgz,.gz,.zip"
+                style="display:none" onchange="mnNodeImportFile(this)">
+            <button class="cbi-button"
+                onclick="document.getElementById('mn-import-file').click()">&#128230; <%:Import Config Pack%></button>
             <% if has_node and not is_guest then %>
             <button class="cbi-button"
                 onclick="mnNodeRefreshAll()">&#8635; <%:Refresh All Configs%></button>
@@ -514,6 +511,68 @@ local has_node = (cur_nid_str ~= "0" and cur_nid_str ~= "")
 <script>
 // 当前节点 ID（字符串，避免科学计数法）
 window.mnCurrentNodeId = "<%=cur_nid_str%>";
+
+// ─── 导入配置包 ───
+window.mnNodeImportFile = function(input) {
+    var file = input.files && input.files[0];
+    input.value = '';
+    if (!file) return;
+
+    var name = file.name.toLowerCase();
+    if (!/\.(tar\.gz|tgz|gz|zip)$/.test(name)) {
+        mnShowToast('不支持的格式，请选择 .tar.gz / .tgz / .gz / .zip', 'error');
+        return;
+    }
+    if (file.size > 768000) {
+        mnShowToast('文件过大（最大 750KB）', 'error');
+        return;
+    }
+
+    var reader = new FileReader();
+    reader.onload = function() {
+        var b64 = reader.result.split(',')[1] || '';
+        mnShowToast('正在解析配置包…');
+        mnFetch(_mnApiBase() + 'node_import', 'POST',
+            { step: 'preview', file_data: b64, filename: file.name },
+            function(data) {
+                if (!data.node_id) {
+                    mnShowToast(data.message || '解析失败', 'error');
+                    return;
+                }
+                var msg = '节点 #' + data.node_id + '\n';
+                msg += '  node.conf: ' + (data.has_node_conf ? '✓' : '✗') + '\n';
+                msg += '  route.conf: ' + (data.has_route ? '✓' : '✗') + '\n';
+                msg += '  address.conf: ' + (data.has_address ? '✓' : '✗') + '\n';
+                msg += '  私钥: ' + (data.has_private_key ? '✓' : '✗') + '\n';
+                msg += '  公钥: ' + (data.has_public_key ? '✓' : '✗') + '\n';
+                if (data.peer_key_count > 0) msg += '  对端公钥: ' + data.peer_key_count + ' 个\n';
+                if (data.is_different_node) {
+                    msg += '\n⚠ 当前节点为 #' + data.current_node_id + '，导入后将切换到 #' + data.node_id;
+                }
+                msg += '\n确认导入？';
+                if (!confirm(msg)) {
+                    mnShowToast('已取消');
+                    return;
+                }
+                mnShowToast('正在导入…');
+                mnFetch(_mnApiBase() + 'node_import', 'POST',
+                    { step: 'apply', tmp_dir: data.tmp_dir, node_id: data.node_id, archive_path: data.archive_path || '' },
+                    function(res) {
+                        if (res.success) {
+                            mnShowToast('配置包已导入，节点 #' + res.node_id, 'success');
+                            setTimeout(function() { location.reload(); }, 1500);
+                        } else {
+                            mnShowToast(res.message || '导入失败', 'error');
+                        }
+                    },
+                    function(err) { mnShowToast(err, 'error'); }
+                );
+            },
+            function(err) { mnShowToast(err, 'error'); }
+        );
+    };
+    reader.readAsDataURL(file);
+};
 
 // 节点列表切换
 window.mnNodeSwitchTo = function(nid) {

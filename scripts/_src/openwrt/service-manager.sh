@@ -1,7 +1,9 @@
-#!/bin/sh
+#!/bin/bash
 # MyNet OpenWrt 服务管理器
 # OpenWrt 平台的 MyNet 服务安装、卸载、升级、状态管理
 # 前提：mynet 软件已安装并验证通过
+# NOTE: 此脚本需要 bash（依赖 common.sh 的 bash 数组语法）
+#       ipk 安装模式下不需要此脚本，直接使用 /etc/init.d/mynet
 
 SCRIPT_NAME="MyNet OpenWrt Service Manager"
 VERSION="1.0.0"

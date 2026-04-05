@@ -17,6 +17,11 @@ M.ZONE_FILE   = M.CONF_DIR  .. "/zone.json"
 M.VPN_CONF    = M.CONF_DIR  .. "/mynet.conf"
 M.LOG_FILE    = M.MYNET_HOME .. "/logs/luci.log"
 
+-- 脚本目录
+M.SCRIPTS_DIR     = M.MYNET_HOME .. "/scripts"
+M.ROUTE_SCRIPT    = M.SCRIPTS_DIR .. "/route.mynet"
+M.FIREWALL_SCRIPT = M.SCRIPTS_DIR .. "/firewall.mynet"
+
 -- GNB 驱动目录（对应 mynet_tui driver/gnb 结构）
 M.GNB_DRIVER_ROOT = M.MYNET_HOME .. "/driver/gnb"
 M.GNB_BIN_DIR     = M.GNB_DRIVER_ROOT .. "/bin"
@@ -92,6 +97,45 @@ function M.int_str(v)
     return tostring(v or 0)
 end
 
+-- node_id 格式化（int_str 的别名，模板中使用）
+M.nid_fmt = M.int_str
+
+-- 字节数格式化为人类可读字符串
+function M.fmt_bytes(n)
+    if not n or n == 0 then return "0 B" end
+    local units = { "B", "KB", "MB", "GB", "TB" }
+    local i = 1
+    while n >= 1024 and i < #units do
+        n = n / 1024
+        i = i + 1
+    end
+    if i == 1 then return string.format("%d B", n) end
+    return string.format("%.1f %s", n, units[i])
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Bash KEY=VALUE 配置文件解析
+-- 解析格式: KEY="VALUE" 或 KEY=VALUE（跳过空行和 # 注释）
+-- opts.lower_keys: 是否将 key 转为小写（默认 false）
+-- ─────────────────────────────────────────────────────────────
+function M.parse_bash_conf(path, opts)
+    local content = M.read_file(path)
+    if not content then return nil end
+    opts = opts or {}
+    local result = {}
+    for line in content:gmatch("[^\n]+") do
+        line = M.trim(line)
+        if line ~= "" and not line:match("^#") then
+            local k, v = line:match('^([%w_]+)%s*=%s*"?(.-)"?%s*$')
+            if k then
+                if opts.lower_keys then k = k:lower() end
+                result[k] = v
+            end
+        end
+    end
+    return result
+end
+
 -- ─────────────────────────────────────────────────────────────
 -- Shell 执行
 -- ─────────────────────────────────────────────────────────────
@@ -128,7 +172,7 @@ function M.file_exists(path)
 end
 
 function M.ensure_dir(path)
-    os.execute("mkdir -p " .. path)
+    os.execute("mkdir -p " .. M.shell_escape(path))
 end
 
 function M.read_file(path)

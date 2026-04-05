@@ -138,24 +138,27 @@ end
 
 -- ─────────────────────────────────────────────────────────────
 -- 确保凭证有效（过期则自动刷新）
--- 对应 Go: SessionService.VerifyOrRefresh()
+-- 对应 Go: config.LoadAndCreateClient + onTokenRefreshed callback
 -- 成功: 返回 (credential, nil)
--- 失败: 返回 (nil, error_string)
+-- 失败: 返回 (nil, error_string) — 需用户重新登录
 -- ─────────────────────────────────────────────────────────────
 function M.ensure_valid()
     local current = cred.load()
     if not current then
         return nil, "not logged in"
     end
-    if cred.is_expired(current) then
-        util.log_info("auth.ensure_valid: token near expiry, refreshing...")
-        local refreshed, err = M.refresh_token()
-        if err then
-            return nil, "token refresh failed: " .. err
-        end
+    -- Token 未过期，直接返回
+    if not cred.is_expired(current) then
+        return current, nil
+    end
+    -- 尝试 refresh_token 刷新
+    util.log_info("auth.ensure_valid: token near expiry, refreshing...")
+    local refreshed, err = M.refresh_token()
+    if refreshed then
         return refreshed, nil
     end
-    return current, nil
+    -- refresh 也失败 → 需要用户重新登录
+    return nil, "token expired, please re-login: " .. (err or "")
 end
 
 return M

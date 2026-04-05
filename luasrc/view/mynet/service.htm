@@ -11,18 +11,9 @@ local base_url = luci.dispatcher.build_url('admin/services/mynet/service')
 local op_url   = luci.dispatcher.build_url('admin/services/mynet/service/op')
 local api_base = luci.dispatcher.build_url('admin/services/mynet/api')
 
-local function nid_fmt(v)
-    if type(v) == "number" then return string.format("%.0f", v) end
-    return tostring(v or 0)
-end
-
-local function fmt_bytes(n)
-    n = tonumber(n) or 0
-    if n >= 1073741824 then return string.format("%.2f GB", n/1073741824) end
-    if n >= 1048576    then return string.format("%.2f MB", n/1048576) end
-    if n >= 1024       then return string.format("%.2f KB", n/1024) end
-    return tostring(n) .. " B"
-end
+local util_m = require("luci.model.mynet.util")
+local nid_fmt = util_m.nid_fmt
+local fmt_bytes = util_m.fmt_bytes
 local function lat_str(us)
     us = tonumber(us) or 0
     if us <= 0 then return "—" end

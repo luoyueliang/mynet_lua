@@ -1,7 +1,7 @@
 <%+header%>
 <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
 
-<h2><%:Plugins%></h2>
+<h2><%:Plugins%> — <%:Proxy Traffic Split%></h2>
 
 <%
 local is_guest = is_guest or false
@@ -39,12 +39,101 @@ local api_base = luci.dispatcher.build_url('admin/services/mynet/api')
     </div>
 </div>
 <% else %>
+<%
+local peers = local_peers or {}
+local cur_nid = cur_node_id
+%>
 
+<!-- ═══════ Proxy Configuration ═══════ -->
+<div class="cbi-section">
+    <h3><%:Proxy Traffic Split%></h3>
+    <table class="table mn-proxy-table">
+        <!-- Auto Start -->
+        <tr class="tr">
+            <th class="th"><%:Auto Start%></th>
+            <td class="td">
+                <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" id="mn-cfg-enabled"
+                        <%=cfg.proxy_enabled and 'checked' or ''%>>
+                    <span id="mn-cfg-enabled-label"><%=cfg.proxy_enabled and 'Enabled' or 'Disabled'%></span>
+                </label>
+                <span class="mn-muted mn-small mn-hint-inline"><%:Auto-start proxy when GNB starts%></span>
+            </td>
+        </tr>
+        <!-- Mode -->
+        <tr class="tr">
+            <th class="th"><%:Mode%></th>
+            <td class="td">
+                <select id="mn-cfg-mode" class="cbi-input-select" style="width:auto">
+                    <option value="client" <%=cfg.proxy_mode=='client' and 'selected' or ''%>><%:Client%></option>
+                    <option value="server" <%=cfg.proxy_mode=='server' and 'selected' or ''%>><%:Server%></option>
+                    <option value="both"   <%=cfg.proxy_mode=='both'   and 'selected' or ''%>><%:Both (Client + Server)%></option>
+                </select>
+                <span class="mn-muted mn-small mn-hint-inline" id="mn-mode-hint"></span>
+            </td>
+        </tr>
+        <!-- Proxy Peer -->
+        <tr class="tr" id="mn-row-peer">
+            <th class="th"><%:Proxy Peer%></th>
+            <td class="td">
+                <select id="mn-cfg-peer" class="cbi-input-select" style="width:auto;min-width:240px">
+                    <option value="">-- <%:Select a peer node%> --</option>
+                    <% for _, p in ipairs(peers) do %>
+                    <% if not p.is_self then %>
+                    <option value="<%=pcdata(p.node_id)%>"
+                        <%=cfg.proxy_peers == p.node_id and 'selected' or ''%>>
+                        #<%=pcdata(p.node_id)%> (<%=pcdata(p.virtual_ip or '')%>)
+                    </option>
+                    <% end %>
+                    <% end %>
+                </select>
+                <span class="mn-muted mn-small mn-hint-inline"><%:Traffic will be forwarded through this node%></span>
+            </td>
+        </tr>
+        <!-- Region -->
+        <tr class="tr" id="mn-row-region">
+            <th class="th"><%:Region%></th>
+            <td class="td">
+                <select id="mn-cfg-region" class="cbi-input-select" style="width:auto">
+                    <option value="domestic"      <%=cfg.node_region=='domestic'      and 'selected' or ''%>><%:Domestic%></option>
+                    <option value="international" <%=cfg.node_region=='international' and 'selected' or ''%>><%:International%></option>
+                </select>
+            </td>
+        </tr>
+        <!-- DNS Mode -->
+        <tr class="tr" id="mn-row-dns">
+            <th class="th"><%:DNS Mode%></th>
+            <td class="td">
+                <select id="mn-cfg-dns" class="cbi-input-select" style="width:auto">
+                    <option value="none"     <%=cfg.dns_mode=='none'     and 'selected' or ''%>><%:None%></option>
+                    <option value="redirect" <%=cfg.dns_mode=='redirect' and 'selected' or ''%>><%:Redirect (DNAT)%></option>
+                    <option value="resolv"   <%=cfg.dns_mode=='resolv'   and 'selected' or ''%>><%:Resolv.conf%></option>
+                </select>
+            </td>
+        </tr>
+        <!-- DNS Server -->
+        <tr class="tr" id="mn-row-dns-srv">
+            <th class="th"><%:DNS Server%></th>
+            <td class="td">
+                <input id="mn-cfg-dns-srv" class="cbi-input-text" type="text"
+                    value="<%=pcdata(cfg.dns_server or '')%>" placeholder="e.g. 10.1.0.1" style="width:200px">
+            </td>
+        </tr>
+    </table>
+
+    <div class="cbi-page-actions mn-btn-group">
+        <button class="cbi-button cbi-button-save" onclick="mnProxySave()"><%:Save%></button>
+        <button id="mn-proxy-start-btn" class="cbi-button cbi-button-apply" onclick="mnProxyStart()"><%:Start%></button>
+        <button id="mn-proxy-stop-btn"  class="cbi-button cbi-button-remove" onclick="mnProxyStop()"><%:Stop%></button>
+    </div>
+</div>
+
+<!-- ═══════ Status ═══════ -->
 <div class="cbi-section">
     <h3><%:Proxy Status%></h3>
-    <table class="table" style="width:100%">
+    <table class="table mn-proxy-table">
         <tr class="tr">
-            <th class="th" style="width:10em"><%:Status%></th>
+            <th class="th"><%:Status%></th>
             <td class="td">
                 <span id="mn-proxy-dot" class="mn-dot <%=ps.running and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
                 <span id="mn-proxy-state" class="<%=ps.running and 'mn-running' or 'mn-stopped'%>">
@@ -53,45 +142,31 @@ local api_base = luci.dispatcher.build_url('admin/services/mynet/api')
             </td>
         </tr>
         <tr class="tr">
-            <th class="th"><%:Mode%></th>
-            <td class="td" id="mn-proxy-mode"><%=pcdata(cfg.proxy_mode or "client")%></td>
+            <th class="th"><%:Configured CIDRs%></th>
+            <td class="td">
+                <span id="mn-proxy-cidrs"><%=ps.stats and ps.stats.route_conf_count or 0%></span>
+                <button class="cbi-button cbi-button-action mn-hint-inline mn-btn-sm"
+                    onclick="mnProxyReload()"><%:Reload IP List%></button>
+            </td>
         </tr>
         <tr class="tr">
-            <th class="th"><%:Region%></th>
-            <td class="td" id="mn-proxy-region"><%=pcdata(cfg.node_region or "domestic")%></td>
-        </tr>
-        <tr class="tr">
-            <th class="th"><%:DNS Mode%></th>
-            <td class="td" id="mn-proxy-dns"><%=pcdata(cfg.dns_mode or "none")%></td>
-        </tr>
-    </table>
-
-    <div style="padding:.5rem 1.25rem 1rem;display:flex;gap:6px">
-        <button id="mn-proxy-start-btn" class="cbi-button cbi-button-apply" onclick="mnProxyStart()"><%:Start%></button>
-        <button id="mn-proxy-stop-btn"  class="cbi-button cbi-button-remove" onclick="mnProxyStop()"><%:Stop%></button>
-        <button id="mn-proxy-reload-btn" class="cbi-button cbi-button-action" onclick="mnProxyReload()"><%:Reload IP List%></button>
-    </div>
-</div>
-
-<!-- Statistics -->
-<div class="cbi-section">
-    <h3><%:Statistics%></h3>
-    <table class="table" style="width:100%">
-        <tr class="tr">
-            <th class="th" style="width:10em"><%:IP Rule Count%></th>
+            <th class="th"><%:Active IP Rules%></th>
             <td class="td" id="mn-proxy-ipset"><%=ps.stats and ps.stats.ipset_count or 0%></td>
         </tr>
         <tr class="tr">
-            <th class="th"><%:Route Table ID%></th>
-            <td class="td" id="mn-proxy-rtid"><%=ps.stats and ps.stats.route_table_id or "-"%></td>
-        </tr>
-        <tr class="tr">
-            <th class="th"><%:Proxy Peers%></th>
-            <td class="td" id="mn-proxy-peers"><%=ps.stats and ps.stats.peer_count or 0%></td>
+            <th class="th"><%:Proxy Peer%></th>
+            <td class="td" id="mn-proxy-peers"><%
+                local peer_id = cfg.proxy_peers or ""
+                if peer_id ~= "" then
+                    write(peer_id)
+                else
+                    write('<span class="mn-muted">—</span>')
+                end
+            %></td>
         </tr>
         <tr class="tr">
             <th class="th"><%:Uptime%></th>
-            <td class="td" id="mn-proxy-uptime"><%
+            <td class="td" id="mn-proxy-uptime" data-seconds="<%=ps.stats and ps.stats.uptime_seconds or 0%>"><%
                 local up = ps.stats and ps.stats.uptime_seconds or 0
                 if up > 0 then
                     local h = math.floor(up / 3600)
@@ -103,191 +178,226 @@ local api_base = luci.dispatcher.build_url('admin/services/mynet/api')
             %></td>
         </tr>
     </table>
-
-    <h4 style="padding:0 1.25rem"><%:Active Layers%></h4>
-    <table class="table" style="width:100%">
-        <tr class="tr">
-            <th class="th" style="width:10em"><%:Route Inject%></th>
-            <td class="td" id="mn-proxy-l-route">
-                <span class="mn-dot <%=ps.layers and ps.layers.route_inject and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
-                <%=ps.layers and ps.layers.route_inject and "Active" or "Inactive"%>
-            </td>
-        </tr>
-        <tr class="tr">
-            <th class="th"><%:Policy Routing%></th>
-            <td class="td" id="mn-proxy-l-policy">
-                <span class="mn-dot <%=ps.layers and ps.layers.policy_routing and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
-                <%=ps.layers and ps.layers.policy_routing and "Active" or "Inactive"%>
-            </td>
-        </tr>
-        <tr class="tr">
-            <th class="th"><%:DNS Intercept%></th>
-            <td class="td" id="mn-proxy-l-dns">
-                <span class="mn-dot <%=ps.layers and ps.layers.dns_intercept and 'mn-dot-green' or 'mn-dot-gray'%>"></span>
-                <%=ps.layers and ps.layers.dns_intercept and "Active" or "Inactive"%>
-            </td>
-        </tr>
-    </table>
 </div>
 
-<!-- Configuration -->
+<!-- ═══════ Network Detection ═══════ -->
 <div class="cbi-section">
-    <h3><%:Configuration%></h3>
-    <table class="table" style="width:100%">
+    <h3><%:Network Detection%></h3>
+    <table class="table mn-proxy-table">
         <tr class="tr">
-            <th class="th" style="width:10em"><%:Mode%></th>
+            <th class="th"><%:Domestic Exit IP%></th>
             <td class="td">
-                <select id="mn-cfg-mode" class="cbi-input-select" style="width:auto">
-                    <option value="client"  <%=cfg.proxy_mode=='client'  and 'selected' or ''%>>Client</option>
-                    <option value="server"  <%=cfg.proxy_mode=='server'  and 'selected' or ''%>>Server</option>
-                </select>
+                <span id="mn-net-domestic-ip" class="mn-muted">-</span>
+                <button class="cbi-button cbi-button-action mn-hint-inline mn-btn-sm"
+                    onclick="mnNetDetect('domestic')"><%:Detect%></button>
             </td>
         </tr>
         <tr class="tr">
-            <th class="th"><%:Region%></th>
+            <th class="th"><%:Proxy Exit IP%></th>
             <td class="td">
-                <select id="mn-cfg-region" class="cbi-input-select" style="width:auto">
-                    <option value="domestic"      <%=cfg.node_region=='domestic'      and 'selected' or ''%>>Domestic</option>
-                    <option value="international" <%=cfg.node_region=='international' and 'selected' or ''%>>International</option>
-                </select>
+                <span id="mn-net-proxy-ip" class="mn-muted">-</span>
+                <button class="cbi-button cbi-button-action mn-hint-inline mn-btn-sm"
+                    onclick="mnNetDetect('proxy')"><%:Detect%></button>
             </td>
         </tr>
         <tr class="tr">
-            <th class="th"><%:DNS Mode%></th>
+            <th class="th"><%:Connectivity Check%></th>
             <td class="td">
-                <select id="mn-cfg-dns" class="cbi-input-select" style="width:auto">
-                    <option value="none"     <%=cfg.dns_mode=='none'     and 'selected' or ''%>>None</option>
-                    <option value="redirect" <%=cfg.dns_mode=='redirect' and 'selected' or ''%>>Redirect (DNAT)</option>
-                    <option value="resolv"   <%=cfg.dns_mode=='resolv'   and 'selected' or ''%>>Resolv.conf</option>
-                </select>
+                <div class="mn-btn-group">
+                    <button class="cbi-button cbi-button-action mn-btn-sm" data-host="google.com">Google</button>
+                    <button class="cbi-button cbi-button-action mn-btn-sm" data-host="youtube.com">YouTube</button>
+                    <button class="cbi-button cbi-button-action mn-btn-sm" data-host="github.com">GitHub</button>
+                    <button class="cbi-button cbi-button-action mn-btn-sm" data-host="openai.com">OpenAI</button>
+                    <button class="cbi-button cbi-button-action mn-btn-sm" data-host="claude.ai">Claude</button>
+                </div>
+                <pre id="mn-net-result" class="mn-pre" style="display:none;margin-top:6px;max-height:200px;overflow-y:auto;font-size:0.85em"></pre>
             </td>
-        </tr>
-        <tr class="tr">
-            <th class="th"><%:DNS Server%></th>
-            <td class="td"><input id="mn-cfg-dns-srv" class="cbi-input-text" type="text" value="<%=pcdata(cfg.dns_server or '')%>" placeholder="e.g. 10.1.0.1"></td>
-        </tr>
-        <tr class="tr">
-            <th class="th"><%:Proxy Peers%></th>
-            <td class="td"><input id="mn-cfg-peers" class="cbi-input-text" type="text" value="<%=pcdata(cfg.proxy_peers or '')%>" placeholder="node_id1,node_id2"></td>
         </tr>
     </table>
-    <div class="cbi-page-actions">
-        <button class="cbi-button cbi-button-save" onclick="mnProxySaveConfig()"><%:Save Configuration%></button>
-    </div>
 </div>
 
-<!-- Diagnostics -->
+<!-- ═══════ Diagnostics ═══════ -->
 <div class="cbi-section">
     <h3><%:Diagnostics%></h3>
-    <div style="display:flex;gap:8px;align-items:center;padding:0 1.25rem 1rem">
-        <input id="mn-diag-ip" class="cbi-input-text" type="text" placeholder="Enter IPv4 address" style="width:200px">
-        <button class="cbi-button cbi-button-apply" onclick="mnProxyDiagnose()"><%:Check Route%></button>
-    </div>
-    <pre id="mn-diag-result" class="mn-terminal" style="display:none;margin:0 1.25rem 1rem;max-height:300px"></pre>
+    <table class="table mn-proxy-table">
+        <tr class="tr">
+            <th class="th"><%:Route Check%></th>
+            <td class="td">
+                <div class="mn-inline-form">
+                    <input id="mn-diag-ip" class="cbi-input-text" type="text" placeholder="<%:Enter IPv4 address%>" style="width:200px">
+                    <button class="cbi-button cbi-button-apply mn-btn-sm" onclick="mnProxyDiagnose()"><%:Check%></button>
+                </div>
+                <pre id="mn-diag-result" class="mn-pre" style="display:none;margin-top:6px;max-height:300px;overflow-y:auto"></pre>
+            </td>
+        </tr>
+    </table>
 </div>
 
 <script src="<%=resource%>/mynet/js/mynet.js"></script>
 <script>
 (function(){
-    var base = '<%=api_base%>/';
+    var apiBase = _mnApiBase();
 
-    window.mnProxyStart = function() {
-        var mode    = document.getElementById('mn-cfg-mode').value;
-        var region  = document.getElementById('mn-cfg-region').value;
-        var dnsMode = document.getElementById('mn-cfg-dns').value;
-        var dnsSrv  = document.getElementById('mn-cfg-dns-srv').value;
-        var peers   = document.getElementById('mn-cfg-peers').value;
-        mnApi(base + 'proxy_start', {
-            method:'POST',
-            body: 'mode=' + mode + '&region=' + region + '&dns_mode=' + dnsMode
-                + '&dns_server=' + encodeURIComponent(dnsSrv)
-                + '&proxy_peers=' + encodeURIComponent(peers)
-        }).then(function(r){ alert(r.message || 'Started'); location.reload(); });
+    /* ─── Mode hint & visibility ─── */
+    var modeHints = {
+        client: '<%:Client mode: forward traffic through proxy peer%>',
+        server: '<%:Server mode: accept traffic from other nodes (no policy routing)%>',
+        both:   '<%:Both: client + server, routes injected on this node%>'
+    };
+    function updateModeUI() {
+        var mode = document.getElementById('mn-cfg-mode').value;
+        document.getElementById('mn-mode-hint').textContent = modeHints[mode] || '';
+        var isClient = (mode === 'client' || mode === 'both');
+        ['mn-row-peer', 'mn-row-region', 'mn-row-dns', 'mn-row-dns-srv'].forEach(function(id){
+            var el = document.getElementById(id);
+            if (el) el.style.display = isClient ? '' : 'none';
+        });
+    }
+    document.getElementById('mn-cfg-mode').addEventListener('change', updateModeUI);
+    updateModeUI();
+
+    /* ─── Enable checkbox label ─── */
+    document.getElementById('mn-cfg-enabled').addEventListener('change', function(){
+        document.getElementById('mn-cfg-enabled-label').textContent = this.checked ? 'Enabled' : 'Disabled';
+    });
+
+    /* ─── Collect form params ─── */
+    function getParams() {
+        return {
+            mode:        document.getElementById('mn-cfg-mode').value,
+            proxy_peers: document.getElementById('mn-cfg-peer').value,
+            region:      document.getElementById('mn-cfg-region').value,
+            dns_mode:    document.getElementById('mn-cfg-dns').value,
+            dns_server:  document.getElementById('mn-cfg-dns-srv').value
+        };
+    }
+
+    /* ─── Save & Apply (enable/disable) ─── */
+    window.mnProxySave = function() {
+        var p = getParams();
+        var enabled = document.getElementById('mn-cfg-enabled').checked;
+        if (enabled && !p.proxy_peers && p.mode !== 'server') {
+            alert('<%:Please select a proxy peer%>');
+            return;
+        }
+        mnApi(enabled ? 'proxy_enable' : 'proxy_disable', enabled ? p : {});
     };
 
-    window.mnProxyStop = function() {
-        mnApi(base + 'proxy_stop', {method:'POST'})
-            .then(function(r){ alert(r.message || 'Stopped'); location.reload(); });
-    };
+    /* ─── Start / Stop / Reload ─── */
+    window.mnProxyStart = function() { mnApi('proxy_start', getParams()); };
+    window.mnProxyStop  = function() { mnApi('proxy_stop', {}); };
+    window.mnProxyReload = function() { mnApi('proxy_reload', {}); };
 
-    window.mnProxyReload = function() {
-        mnApi(base + 'proxy_reload', {method:'POST'})
-            .then(function(r){ alert(r.message || 'Reloaded'); location.reload(); });
-    };
-
-    window.mnProxySaveConfig = function() {
-        var mode    = document.getElementById('mn-cfg-mode').value;
-        var region  = document.getElementById('mn-cfg-region').value;
-        var dnsMode = document.getElementById('mn-cfg-dns').value;
-        var dnsSrv  = document.getElementById('mn-cfg-dns-srv').value;
-        var peers   = document.getElementById('mn-cfg-peers').value;
-        mnApi(base + 'proxy_config', {
-            method:'POST',
-            body: 'proxy_mode=' + mode + '&node_region=' + region + '&dns_mode=' + dnsMode
-                + '&dns_server=' + encodeURIComponent(dnsSrv)
-                + '&proxy_peers=' + encodeURIComponent(peers)
-                + '&proxy_enabled=1'
-        }).then(function(r){ alert(r.message || 'Saved'); });
-    };
-
+    /* ─── Diagnostics (custom response) ─── */
     window.mnProxyDiagnose = function() {
         var ip = document.getElementById('mn-diag-ip').value.trim();
         if (!ip) return;
         var el = document.getElementById('mn-diag-result');
         el.style.display = 'block';
         el.textContent = 'Checking...';
-        mnApi(base + 'proxy_diagnose', {
-            method:'POST', body:'ip=' + encodeURIComponent(ip)
-        }).then(function(r){
-            if (r.data && r.data.checks) {
-                var out = '';
-                r.data.checks.forEach(function(c){
-                    out += '=== ' + c.name + ' ===\n';
-                    if (c.matched !== undefined) out += 'Matched: ' + c.matched + '\n';
-                    out += (c.output || '(no output)') + '\n\n';
-                });
-                el.textContent = out;
-            } else {
-                el.textContent = JSON.stringify(r, null, 2);
-            }
-        });
+        mnFetch(apiBase + 'proxy_diagnose', 'POST', { ip: ip },
+            function(r){
+                if (r.data && r.data.checks) {
+                    var out = '';
+                    r.data.checks.forEach(function(c){
+                        out += '=== ' + c.name + ' ===\n';
+                        if (c.matched !== undefined) out += 'Matched: ' + c.matched + '\n';
+                        out += (c.output || '(no output)') + '\n\n';
+                    });
+                    el.textContent = out;
+                } else {
+                    el.textContent = JSON.stringify(r, null, 2);
+                }
+            },
+            function(err){ el.textContent = 'Error: ' + err; }
+        );
     };
 
-    // Auto-refresh status every 30s
-    function refreshStatus() {
-        mnApi(base + 'proxy_status').then(function(r){
-            if (!r.data) return;
-            var d = r.data;
-            var dot = document.getElementById('mn-proxy-dot');
-            var state = document.getElementById('mn-proxy-state');
-            if (d.running) {
-                dot.className = 'mn-dot mn-dot-green';
-                state.className = 'mn-running';
-                state.textContent = 'Running';
-            } else {
-                dot.className = 'mn-dot mn-dot-gray';
-                state.className = 'mn-stopped';
-                state.textContent = 'Stopped';
-            }
-            if (d.stats) {
-                var el;
-                el = document.getElementById('mn-proxy-ipset');
-                if (el) el.textContent = d.stats.ipset_count || 0;
-                el = document.getElementById('mn-proxy-peers');
-                if (el) el.textContent = d.stats.peer_count || 0;
-                if (d.stats.uptime_seconds > 0) {
-                    var h = Math.floor(d.stats.uptime_seconds / 3600);
-                    var m = Math.floor((d.stats.uptime_seconds % 3600) / 60);
-                    el = document.getElementById('mn-proxy-uptime');
-                    if (el) el.textContent = h + 'h ' + m + 'm';
+    /* ─── Network Detection (custom response) ─── */
+    window.mnNetDetect = function(type) {
+        var elId = type === 'domestic' ? 'mn-net-domestic-ip' : 'mn-net-proxy-ip';
+        var el = document.getElementById(elId);
+        el.textContent = '<%:Detecting...%>';
+        el.className = 'mn-muted';
+        mnFetch(apiBase + 'proxy_net_detect', 'POST', { type: type },
+            function(r){
+                if (r.data && r.data.ip) {
+                    el.textContent = r.data.ip + (r.data.location ? ' (' + r.data.location + ')' : '');
+                    el.className = '';
+                } else {
+                    el.textContent = r.message || '<%:Detection failed%>';
+                    el.className = 'mn-stopped';
                 }
+            },
+            function(){
+                el.textContent = '<%:Detection failed%>';
+                el.className = 'mn-stopped';
             }
-        });
+        );
+    };
+
+    /* ─── Connectivity check via data-host delegation ─── */
+    window.mnNetCheck = function(host) {
+        var el = document.getElementById('mn-net-result');
+        el.style.display = 'block';
+        var prev = el.textContent;
+        el.textContent = (prev && prev !== '' ? prev + '\n' : '') + '[' + host + '] checking...';
+        mnFetch(apiBase + 'proxy_net_check', 'POST', { host: host },
+            function(r){
+                var line = '[' + host + '] ';
+                if (r.data && r.data.reachable) {
+                    line += '\u2713 ' + (r.data.time_ms || '') + 'ms';
+                    if (r.data.ip) line += ' (' + r.data.ip + ')';
+                } else {
+                    line += '\u2717 ' + (r.data && r.data.error || r.message || 'unreachable');
+                }
+                el.textContent = el.textContent.replace('[' + host + '] checking...', line);
+            },
+            function(){
+                el.textContent = el.textContent.replace('[' + host + '] checking...', '[' + host + '] \u2717 error');
+            }
+        );
+    };
+    document.querySelectorAll('[data-host]').forEach(function(btn){
+        btn.addEventListener('click', function(){ mnNetCheck(this.dataset.host); });
+    });
+
+    /* ─── Auto-refresh status ─── */
+    function refreshProxyStatus() {
+        mnFetch(apiBase + 'proxy_status', 'POST', {},
+            function(r){
+                if (!r || !r.data) return;
+                var d = r.data;
+                var dot = document.getElementById('mn-proxy-dot');
+                var state = document.getElementById('mn-proxy-state');
+                if (d.running) {
+                    dot.className = 'mn-dot mn-dot-green';
+                    state.className = 'mn-running';
+                    state.textContent = 'Running';
+                } else {
+                    dot.className = 'mn-dot mn-dot-gray';
+                    state.className = 'mn-stopped';
+                    state.textContent = 'Stopped';
+                }
+                if (d.stats) {
+                    var el;
+                    el = document.getElementById('mn-proxy-cidrs');
+                    if (el) el.textContent = d.stats.route_conf_count || 0;
+                    el = document.getElementById('mn-proxy-ipset');
+                    if (el) el.textContent = d.stats.ipset_count || 0;
+                    el = document.getElementById('mn-proxy-uptime');
+                    if (el) el.textContent = _mnFmtUptime(d.stats.uptime_seconds || 0);
+                }
+            },
+            function(){}
+        );
     }
-    setInterval(refreshStatus, 30000);
+    setInterval(refreshProxyStatus, 30000);
 })();
 </script>
 
-<% end %> <!-- end logged-in plugin content -->
+<% end %>
+
+<div id="mn-toast" class="mn-toast mn-hidden"></div>
 
 <%+footer%>

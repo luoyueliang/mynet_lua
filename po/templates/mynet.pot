@@ -1196,3 +1196,23 @@ msgstr ""
 #: view/mynet/*.htm
 msgid "not found"
 msgstr ""
+
+#: view/mynet/wizard.htm
+msgid "Continue"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "No peers found in route.conf."
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Configure node first"
+msgstr ""
+
+#: view/mynet/guest.htm
+msgid "Switch local node to this one? Service will need restart."
+msgstr ""
+
+#: view/mynet/guest.htm
+msgid "Use This Config"
+msgstr ""

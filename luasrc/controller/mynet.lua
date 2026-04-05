@@ -145,6 +145,7 @@ function index()
     entry({"admin", "services", "mynet", "api", "node_switch"},    call("api_node_switch")         ).dependent = false
     entry({"admin", "services", "mynet", "api", "node_gen_key"},   call("api_node_gen_key")        ).dependent = false
     entry({"admin", "services", "mynet", "api", "node_save_conf"}, call("api_node_save_config")    ).dependent = false
+    entry({"admin", "services", "mynet", "api", "node_import"},    call("api_node_import_config")  ).dependent = false
     -- 服务控制 API
     entry({"admin", "services", "mynet", "api", "svc_start"},      call("api_svc_start")           ).dependent = false
     entry({"admin", "services", "mynet", "api", "svc_stop"},       call("api_svc_stop")            ).dependent = false
@@ -186,9 +187,13 @@ function index()
     entry({"admin", "services", "mynet", "api", "fw_apply_masq"}, call("api_fw_apply_masq")).dependent = false
 
     -- 插件（Proxy/远程监控等，需登录）
+    entry({"admin", "services", "mynet", "plugin"},
+        call("action_plugin"),
+        _("Plugins"), 56
+    ).dependent = false
     entry({"admin", "services", "mynet", "proxy"},
         call("action_proxy"),
-        _("Plugins"), 56
+        nil
     ).dependent = false
     entry({"admin", "services", "mynet", "api", "proxy_status"},   call("api_proxy_status")   ).dependent = false
     entry({"admin", "services", "mynet", "api", "proxy_start"},    call("api_proxy_start")    ).dependent = false
@@ -196,6 +201,10 @@ function index()
     entry({"admin", "services", "mynet", "api", "proxy_reload"},   call("api_proxy_reload")   ).dependent = false
     entry({"admin", "services", "mynet", "api", "proxy_diagnose"}, call("api_proxy_diagnose") ).dependent = false
     entry({"admin", "services", "mynet", "api", "proxy_config"},   call("api_proxy_config")   ).dependent = false
+    entry({"admin", "services", "mynet", "api", "proxy_enable"},   call("api_proxy_enable")   ).dependent = false
+    entry({"admin", "services", "mynet", "api", "proxy_disable"},  call("api_proxy_disable")  ).dependent = false
+    entry({"admin", "services", "mynet", "api", "proxy_net_detect"}, call("api_proxy_net_detect")).dependent = false
+    entry({"admin", "services", "mynet", "api", "proxy_net_check"},  call("api_proxy_net_check") ).dependent = false
 
     -- GNB 离线（Guest）模式（不在菜单显示，Dashboard 入口访问）
     entry({"admin", "services", "mynet", "guest"},
@@ -262,20 +271,16 @@ local function check_rate_limit(max_per_min, category)
 end
 
 -- 确保已登录；未登录则重定向 login，返回 nil
+-- 优先级: token有效 → refresh_token → 存储凭证重登录 → 重定向login
 local function require_auth()
     -- Guest 模式无需 MyNet 认证，返回伪凭证让页面正常渲染
     if cfg_m.get_mode() == "guest" then
         return { guest = true, user_email = "Guest" }
     end
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then
-        -- 尝试自动刷新
-        local refreshed = auth_m.refresh_token()
-        if refreshed then return refreshed end
-        http.redirect(disp.build_url("admin/services/mynet/login"))
-        return nil
-    end
-    return c
+    local c, err = auth_m.ensure_valid()
+    if c then return c end
+    http.redirect(disp.build_url("admin/services/mynet/login"))
+    return nil
 end
 
 -- 宽松认证：未登录时以"本地模式"继续渲染（不重定向登录）
@@ -283,13 +288,9 @@ local function auth_or_local()
     if cfg_m.get_mode() == "guest" then
         return { guest = true, local_mode = true, user_email = "Guest" }
     end
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then
-        local refreshed = auth_m.refresh_token()
-        if refreshed then return refreshed end
-        return { guest = true, local_mode = true, user_email = "" }
-    end
-    return c
+    local c, err = auth_m.ensure_valid()
+    if c then return c end
+    return { guest = true, local_mode = true, user_email = "" }
 end
 
 -- 输出 JSON 响应
@@ -314,6 +315,33 @@ local function get_mynetd_status()
     return sys_m.get_mynetd_status()
 end
 
+-- 服务启动错误 → 用户友好的提示 + 操作引导
+local function _svc_error_hint(detail, op)
+    if not detail or detail == "" then
+        return op .. " failed — check service logs on the Operations page"
+    end
+    if detail:find("private_key") or detail:find("%.private") then
+        return "Private key missing — go to Node page → Keys tab to import or generate a key pair"
+    end
+    if detail:find("node%.conf") then
+        return "node.conf not found — go to Node page → Config tab to sync or create config"
+    end
+    if detail:find("route%.conf") then
+        return "route.conf missing — go to Node page → Config tab and click Refresh All"
+    end
+    if detail:find("gnb_ctl") or detail:find("gnb not found") or detail:find("GNB binary") then
+        return "GNB not installed — go to Settings page to install GNB"
+    end
+    if detail:find("kmod%-tun") or detail:find("/dev/net/tun") then
+        return "kmod-tun not loaded — go to Node page → Dependencies and click Auto-Install"
+    end
+    if detail:find("failed to start") or detail:find("exited immediately") then
+        return "GNB process crashed on startup — check Operations → Diagnose for details"
+    end
+    -- 通用 fallback
+    return op .. " failed — " .. (detail:sub(1, 120))
+end
+
 -- API 认证 + 频率限制（JSON API 入口统一使用）
 -- 返回 credential 或 nil（已输出 JSON 错误）
 local function require_api_auth(max_per_min)
@@ -327,12 +355,50 @@ local function require_api_auth(max_per_min)
     if cfg_m.get_mode() == "guest" then
         return { guest = true }
     end
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then
+    local c, err = auth_m.ensure_valid()
+    if not c then
         json_err("not authenticated", 401)
         return nil
     end
     return c
+end
+
+-- 本地操作仅做频率限制，不检查 MyNet 认证
+-- 用于：服务启停、诊断、防火墙、系统依赖等纯本地操作
+local function require_local_api(max_per_min)
+    if not check_rate_limit(max_per_min or 60, "api") then
+        http.status(429, "Too Many Requests")
+        http.prepare_content("application/json")
+        http.write(util.json_encode({ success = false, message = "rate limit exceeded" }) or "{}")
+        return nil
+    end
+    return true
+end
+
+-- 解析并校验 node_id 参数（JSON API 入口统一使用）
+-- 返回 node_id (number) 或 nil（已输出 JSON 错误）
+-- optional: 为 true 时允许空值，返回 nil 且不报错
+local function parse_node_id(optional)
+    local raw = http.formvalue("node_id") or ""
+    if raw == "" then
+        if optional then return nil end
+        json_err("node_id required"); return nil
+    end
+    if not util.validate_node_id(raw) then json_err("invalid node_id"); return nil end
+    local nid = tonumber(raw)
+    if not nid then json_err("node_id required"); return nil end
+    return nid
+end
+
+-- 收集 proxy 表单参数（api_proxy_start/enable/config 共用）
+local function _proxy_params()
+    return {
+        mode        = http.formvalue("mode") or http.formvalue("proxy_mode"),
+        region      = http.formvalue("region") or http.formvalue("node_region"),
+        dns_mode    = http.formvalue("dns_mode"),
+        dns_server  = http.formvalue("dns_server"),
+        proxy_peers = http.formvalue("proxy_peers"),
+    }
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -451,14 +517,35 @@ function action_login()
         local password = util.trim(http.formvalue("password") or "")
         prefill = email
 
+        -- 记录登录前的 user_id，用于检测帐号切换
+        local old_cred = cred_m.load()
+        local old_user_id = old_cred and old_cred.user_id or "0"
+
         local new_cred, login_err = auth_m.login(email, password)
         if login_err then
             err_msg = login_err
         else
-            -- 如果之前是 guest 模式，切换回在线模式
-            if is_guest then
-                cfg_m.set_mode("online")
+            -- 设置运行模式为 mynet（在线模式）
+            cfg_m.set_mode("mynet")
+
+            -- 帐号切换检测：登录前的 user_id 与新帐号不同 → 重置配置
+            local new_user_id = new_cred.user_id or "0"
+            if old_user_id ~= "0" and old_user_id ~= new_user_id then
+                util.log_info("action_login: account changed ("
+                    .. old_user_id .. " → " .. new_user_id .. "), resetting config")
+                cfg_m.save_current_zone(0, "")
+                cfg_m.save_node_id(0)
+                http.redirect(disp.build_url("admin/services/mynet/wizard"))
+                return
             end
+
+            -- 同帐号或首次登录：已有完整配置 → 直接进 Dashboard
+            if cfg_m.is_mynet_configured() then
+                http.redirect(disp.build_url("admin/services/mynet/index"))
+                return
+            end
+
+            -- 未配置 → 进入向导
             http.redirect(disp.build_url("admin/services/mynet/wizard"))
             return
         end
@@ -473,7 +560,7 @@ end
 -- 登出
 function action_logout()
     auth_m.logout()
-    http.redirect(disp.build_url("admin/services/mynet/login"))
+    http.redirect(disp.build_url("admin/services/mynet/wizard") .. "?tab=landing")
 end
 
 -- 区域列表（已移除菜单，重定向到 node 页）
@@ -511,7 +598,7 @@ end
 
 -- 节点配置页（主菜单 Node）
 function action_node()
-    local c = require_auth()
+    local c = auth_or_local()
     if not c then return end
 
     local is_guest   = c.guest == true
@@ -565,7 +652,7 @@ function action_node()
     -- Tab 切换 (config / list)
     local node_tab = http.formvalue("tab") or "config"
     local local_peers = nil
-    if node_tab == "list" and node_id and util.int_str(node_id) ~= "0" then
+    if node_id and util.int_str(node_id) ~= "0" then
         local_peers = node_m.get_local_peers(node_id)
     end
 
@@ -605,7 +692,7 @@ end
 
 -- 设置页（简化：只有 use_system_gnb 开关）
 function action_settings()
-    local c = require_auth()
+    local c = auth_or_local()
     if not c then return end
 
     local is_guest = c.guest == true
@@ -640,7 +727,7 @@ end
 
 -- 保存设置（POST）— 简化版
 function action_settings_save()
-    local c = require_auth()
+    local c = auth_or_local()
     if not c then return end
 
     local use_system_gnb = http.formvalue("use_system_gnb") == "1"
@@ -665,13 +752,21 @@ function action_wizard()
     local node_id = cfg_m.get_node_id()
     local has_node = node_id and util.int_str(node_id) ~= "0"
 
-    -- 如果没有节点且没有登录凭证 → 显示模式选择首页
     local c = cred_m.load()
     local has_cred = c and cred_m.is_valid(c)
 
-    -- 显式请求 landing 页（或无凭证时自动显示）
+    -- 凭证无效时尝试自动恢复（refresh + 重登录）
+    if not has_cred then
+        local refreshed = auth_m.ensure_valid()
+        if refreshed then
+            c = refreshed
+            has_cred = true
+        end
+    end
+
+    -- 显式请求 landing 页 → 直接显示，无论任何状态
     local req_tab = http.formvalue("tab")
-    if req_tab == "landing" or (not has_cred and not has_node) then
+    if req_tab == "landing" then
         local gnb_bin = cfg_m.get_gnb_bin()
         tmpl.render("mynet/wizard", {
             active_tab    = "landing",
@@ -680,20 +775,29 @@ function action_wizard()
         return
     end
 
-    -- Guest 模式跳转 Guest 页
+    -- 未登录 → 始终显示 landing 选择页，不自动跳转
+    if not has_cred then
+        local gnb_bin = cfg_m.get_gnb_bin()
+        tmpl.render("mynet/wizard", {
+            active_tab    = "landing",
+            gnb_installed = util.file_exists(gnb_bin),
+        })
+        return
+    end
+
+    -- 已登录但 Guest 模式 → 跳 Guest 管理页
     if cfg_m.get_mode() == "guest" then
         http.redirect(disp.build_url("admin/services/mynet/guest"))
         return
     end
 
-    -- 在线模式需要登录
-    if not has_cred then
-        http.redirect(disp.build_url("admin/services/mynet/login"))
+    -- 已有完整配置 + 非显式请求向导 → 跳过向导，进入节点页
+    if cfg_m.is_mynet_configured() and (not req_tab or req_tab == "") then
+        http.redirect(disp.build_url("admin/services/mynet/node"))
         return
     end
 
     local zone    = cfg_m.load_current_zone()
-    local node_id = cfg_m.get_node_id()
     local has_zone = zone and tostring(zone.zone_id) ~= "0"
 
     -- 加载 zones（永远需要）
@@ -717,12 +821,12 @@ function action_wizard()
     end
 
     -- 自动跳到第一个未完成步骤（用户未显式指定 tab 时）
-    local has_node = (node_id ~= nil and node_id ~= 0)
-    local active_tab = http.formvalue("tab")
+    local has_node_now = (node_id ~= nil and node_id ~= 0)
+    local active_tab = req_tab
     if not active_tab or active_tab == "" then
         if not has_zone then
             active_tab = "zone"
-        elseif not has_node then
+        elseif not has_node_now then
             active_tab = "node"
         else
             active_tab = "account"
@@ -744,8 +848,8 @@ end
 
 -- 向导：选择节点并写入配置（POST）
 function action_wizard_select_node()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then
+    local c, err = auth_m.ensure_valid()
+    if not c then
         http.redirect(disp.build_url("admin/services/mynet/login"))
         return
     end
@@ -807,19 +911,6 @@ local function read_nat_state()
     end
 
     return nat_out, nat_in
-end
-
--- 查找 service-manager.sh 路径
-local function find_svc_mgr()
-    local paths = {
-        util.MYNET_HOME .. "/scripts/_src/openwrt/service-manager.sh",
-        util.MYNET_HOME .. "/scripts/service-manager.sh",
-        "/usr/share/mynet/service-manager.sh",
-    }
-    for _, p in ipairs(paths) do
-        if util.file_exists(p) then return p end
-    end
-    return nil
 end
 
 
@@ -911,7 +1002,7 @@ end
 
 -- 服务操作（POST）
 function action_service_op()
-    local c = require_auth()
+    local c = auth_or_local()
     if not c then return end
 
     local service = http.formvalue("service") or "mynet"
@@ -944,22 +1035,38 @@ function action_service_op()
     -- 网络操作（从原 network_op 合并）
     elseif service == "network" then
         if op == "reload_route" then
-            local script = find_svc_mgr()
-            if script then
-                local out, code = util.exec_status("sh " .. script .. " restart 2>&1")
-                ok_msg = "route apply: " .. (util.trim(out or "") ~= "" and util.trim(out) or "ok")
-                if code ~= 0 then err_msg = ok_msg; ok_msg = nil end
+            local iface = cfg_m.get_vpn_interface()
+            if not util.file_exists(util.VPN_CONF) then
+                err_msg = "mynet.conf 不存在，请先配置节点"
+            elseif not util.file_exists(util.CONF_DIR .. "/route.conf") then
+                err_msg = "route.conf 不存在，请先同步节点配置"
+            elseif not util.file_exists(util.ROUTE_SCRIPT) then
+                err_msg = "route.mynet 脚本不存在"
             else
-                err_msg = "service-manager.sh not found"
+                -- 检查 VPN 接口是否存在（服务必须已启动）
+                local iface_check = util.trim(util.exec("ip link show " .. iface .. " 2>/dev/null") or "")
+                if iface_check == "" then
+                    err_msg = "VPN 接口 " .. iface .. " 未启动，请先启动服务"
+                else
+                    local env = "MYNET_HOME=" .. util.MYNET_HOME
+                    local cmd = env .. " sh " .. util.ROUTE_SCRIPT .. " start --interface " .. iface .. " 2>&1"
+                    local out, code = util.exec_status(cmd)
+                    ok_msg = "route apply: " .. (util.trim(out or "") ~= "" and util.trim(out) or "ok")
+                    if code ~= 0 then err_msg = ok_msg; ok_msg = nil end
+                end
             end
         elseif op == "reload_fw" then
-            local fw_script = "/etc/mynet/scripts/firewall.mynet"
-            if util.file_exists(fw_script) then
-                local out, code = util.exec_status("sh " .. fw_script .. " 2>&1")
+            local iface = cfg_m.get_vpn_interface()
+            if not util.file_exists(util.VPN_CONF) then
+                err_msg = "mynet.conf 不存在，请先配置节点"
+            elseif not util.file_exists(util.FIREWALL_SCRIPT) then
+                err_msg = "firewall.mynet 脚本不存在"
+            else
+                local env = "MYNET_HOME=" .. util.MYNET_HOME
+                local cmd = env .. " sh " .. util.FIREWALL_SCRIPT .. " start --interface " .. iface .. " 2>&1"
+                local out, code = util.exec_status(cmd)
                 ok_msg = "firewall apply: " .. (util.trim(out or "") ~= "" and util.trim(out) or "ok")
                 if code ~= 0 then err_msg = ok_msg; ok_msg = nil end
-            else
-                err_msg = "firewall.mynet not found"
             end
         elseif op == "reload_fw_commit" then
             local out, code = util.exec_status("uci commit firewall && /etc/init.d/firewall reload 2>&1")
@@ -1010,15 +1117,10 @@ function action_service_op()
                 err_msg = "未知的 NAT 类型"
             end
         elseif op == "svc_status" or op == "svc_start" or op == "svc_stop" or op == "svc_restart" then
-            local mgr = find_svc_mgr()
-            if mgr then
-                local cmd_map = { svc_status="status", svc_start="start", svc_stop="stop", svc_restart="restart" }
-                local out, code = util.exec_status("sh " .. mgr .. " " .. cmd_map[op] .. " 2>&1")
-                ok_msg = util.trim(out or "")
-                if code ~= 0 then err_msg = ok_msg; ok_msg = nil end
-            else
-                err_msg = "service-manager.sh not found"
-            end
+            local cmd_map = { svc_status="status", svc_start="start", svc_stop="stop", svc_restart="restart" }
+            local out, code = util.exec_status("/etc/init.d/mynet " .. cmd_map[op] .. " 2>&1")
+            ok_msg = util.trim(out or "")
+            if code ~= 0 then err_msg = ok_msg; ok_msg = nil end
         elseif op == "fw_setup" then
             local fw_ok, fw_msg = sys_m.ensure_firewall_zone()
             if fw_ok then
@@ -1085,7 +1187,7 @@ end
 
 -- 网络管理页（重定向到 Operations 页）
 function action_network()
-    local c = require_auth()
+    local c = auth_or_local()
     if not c then return end
     local tab = http.formvalue("tab") or "route"
     http.redirect(disp.build_url("admin/services/mynet/service") .. "?tab=" .. tab)
@@ -1104,7 +1206,7 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function api_get_status()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
     local node_id = cfg_m.get_node_id()
     -- 状态优先检测 gnb 进程（直接启动模式），其次回落到 init.d 服务
@@ -1126,8 +1228,7 @@ function api_get_status()
 end
 
 function api_get_nodes()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_api_auth() then return end
 
     local page     = tonumber(http.formvalue("page"))     or 1
     local per_page = tonumber(http.formvalue("per_page")) or 20
@@ -1138,8 +1239,7 @@ function api_get_nodes()
 end
 
 function api_get_zones()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_api_auth() then return end
 
     local zones, err = zone_m.get_zones()
     if err then json_err(err); return end
@@ -1147,74 +1247,84 @@ function api_get_zones()
 end
 
 function api_vpn_start()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
-    local ok, code = node_m.start_vpn()
-    json_ok({ success = ok, message = ok and "VPN started" or ("start failed: code=" .. tostring(code)) })
+    local output, code = node_m.start_vpn()
+    if code == 0 then
+        json_ok({ success = true, message = "VPN started" })
+    else
+        local detail = util.trim(output or "")
+        local hint = _svc_error_hint(detail, "start")
+        json_ok({ success = false, message = hint, detail = detail, code = code })
+    end
 end
 
 function api_vpn_stop()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
-    local ok, code = node_m.stop_vpn()
-    json_ok({ success = ok, message = ok and "VPN stopped" or ("stop failed: code=" .. tostring(code)) })
+    local output, code = node_m.stop_vpn()
+    if code == 0 then
+        json_ok({ success = true, message = "VPN stopped" })
+    else
+        local detail = util.trim(output or "")
+        json_ok({ success = false, message = "Stop failed (code=" .. tostring(code) .. ")", detail = detail, code = code })
+    end
 end
 
 function api_vpn_restart()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
-    local ok, code = node_m.restart_vpn()
-    json_ok({ success = ok, message = ok and "VPN restarted" or ("restart failed: code=" .. tostring(code)) })
+    local output, code = node_m.restart_vpn()
+    if code == 0 then
+        json_ok({ success = true, message = "VPN restarted" })
+    else
+        local detail = util.trim(output or "")
+        local hint = _svc_error_hint(detail, "restart")
+        json_ok({ success = false, message = hint, detail = detail, code = code })
+    end
 end
 
 -- GNB 直接启停（node 页 Start/Stop/Restart 按鈕）
 function api_gnb_start()
-    if not require_api_auth() then return end
-    local raw_nid = http.formvalue("node_id") or ""
-    if not util.validate_node_id(raw_nid) then json_err("invalid node_id"); return end
-    local node_id = tonumber(raw_nid)
-    if not node_id then json_err("node_id required"); return end
+    if not require_local_api() then return end
+    local node_id = parse_node_id()
+    if not node_id then return end
     local ok, err = node_m.start_gnb(node_id)
     if ok then
         json_ok({ success = true, message = "GNB started" })
     else
-        json_ok({ success = false, message = err or "start failed" })
+        local hint = _svc_error_hint(err or "", "start")
+        json_ok({ success = false, message = hint, detail = err })
     end
 end
 
 function api_gnb_stop()
-    if not require_api_auth() then return end
-    local raw_nid = http.formvalue("node_id") or ""
-    if not util.validate_node_id(raw_nid) then json_err("invalid node_id"); return end
-    local node_id = tonumber(raw_nid)
-    if not node_id then json_err("node_id required"); return end
+    if not require_local_api() then return end
+    local node_id = parse_node_id()
+    if not node_id then return end
     node_m.stop_gnb(node_id)
     json_ok({ success = true, message = "GNB stopped" })
 end
 
 function api_gnb_restart()
-    if not require_api_auth() then return end
-    local raw_nid = http.formvalue("node_id") or ""
-    if not util.validate_node_id(raw_nid) then json_err("invalid node_id"); return end
-    local node_id = tonumber(raw_nid)
-    if not node_id then json_err("node_id required"); return end
+    if not require_local_api() then return end
+    local node_id = parse_node_id()
+    if not node_id then return end
     local ok, err = node_m.restart_gnb(node_id)
     if ok then
         json_ok({ success = true, message = "GNB restarted" })
     else
-        json_ok({ success = false, message = err or "restart failed" })
+        local hint = _svc_error_hint(err or "", "restart")
+        json_ok({ success = false, message = hint, detail = err })
     end
 end
 
 function api_node_refresh_config()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_api_auth() then return end
 
-    local raw_nid = http.formvalue("node_id") or ""
-    if not util.validate_node_id(raw_nid) then json_err("invalid node_id"); return end
-    local node_id     = tonumber(raw_nid)
+    local node_id = parse_node_id()
+    if not node_id then return end
     local config_type = http.formvalue("type") or "all"
-    if not node_id then json_err("node_id required"); return end
 
     if config_type == "all" then
         -- 优先 bundle API，自动 fallback
@@ -1228,14 +1338,11 @@ end
 
 -- 保存私钥 API（POST: node_id, key_hex）
 function api_node_save_key()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_api_auth() then return end
 
-    local raw_nid = http.formvalue("node_id") or ""
-    if not util.validate_node_id(raw_nid) then json_err("invalid node_id"); return end
-    local node_id = tonumber(raw_nid)
+    local node_id = parse_node_id()
+    if not node_id then return end
     local key_hex = util.trim(http.formvalue("key_hex") or "")
-    if not node_id then json_err("node_id required"); return end
     if not util.validate_hex(key_hex, 128) then json_err("key_hex must be 128 hex chars"); return end
 
     -- 1. 写入私钥
@@ -1259,13 +1366,10 @@ end
 
 -- 切换节点 API（POST: node_id）
 function api_node_switch()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_api_auth() then return end
 
-    local raw_nid = http.formvalue("node_id") or ""
-    if not util.validate_node_id(raw_nid) then json_err("invalid node_id"); return end
-    local node_id = tonumber(raw_nid)
-    if not node_id then json_err("node_id required"); return end
+    local node_id = parse_node_id()
+    if not node_id then return end
 
     cfg_m.generate_mynet_conf(node_id)
     node_m.refresh_configs_bundle(node_id)
@@ -1278,13 +1382,10 @@ end
 -- 1. 将私钥保存到本地 {node_id}.key
 -- 2. 将公钥上传到服务器 PUT /nodes/{id}/keys
 function api_node_gen_key()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_api_auth() then return end
 
-    local raw_nid = http.formvalue("node_id") or ""
-    if not util.validate_node_id(raw_nid) then json_err("invalid node_id"); return end
-    local node_id = tonumber(raw_nid)
-    if not node_id then json_err("node_id required"); return end
+    local node_id = parse_node_id()
+    if not node_id then return end
 
     -- 生成密钥对
     local kp, gen_err = node_m.generate_key_pair()
@@ -1315,7 +1416,7 @@ end
 
 -- 保存节点配置文件（address.conf / route.conf / node.conf）
 function api_node_save_config()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
     local config_type = http.formvalue("config_type") or ""
     local content     = http.formvalue("content") or ""
@@ -1423,30 +1524,101 @@ function api_node_save_config()
     json_ok(resp)
 end
 
+-- 导入配置包（两阶段：step=preview 或 step=apply）
+function api_node_import_config()
+    if not require_local_api() then return end
+
+    local step = http.formvalue("step") or "preview"
+
+    if step == "preview" then
+        -- 接收 base64 编码的压缩包
+        local b64_data = http.formvalue("file_data") or ""
+        local filename = http.formvalue("filename") or ""
+        if b64_data == "" then
+            json_err("no file data"); return
+        end
+        -- 限制大小（base64 最大 ~1MB）
+        if #b64_data > 1048576 then
+            json_err("file too large (max 1MB)"); return
+        end
+        -- 验证文件后缀
+        local ext = filename:lower()
+        if not (ext:match("%.tar%.gz$") or ext:match("%.tgz$")
+             or ext:match("%.gz$") or ext:match("%.zip$")) then
+            json_err("unsupported format (need .tar.gz/.tgz/.gz/.zip)"); return
+        end
+
+        local nixio = require("nixio")
+        local raw = nixio.bin.b64decode(b64_data)
+        if not raw or #raw == 0 then
+            json_err("base64 decode failed"); return
+        end
+
+        -- 写入临时文件
+        local suffix = ext:match("%.zip$") and ".zip" or ".tar.gz"
+        local tmp_file = "/tmp/mynet_node_upload_" .. os.time() .. suffix
+        util.write_file(tmp_file, raw)
+
+        local preview, err = node_m.import_preview(tmp_file, filename)
+        if not preview then
+            os.execute("rm -f '" .. tmp_file .. "'")
+            json_err(err or "preview failed"); return
+        end
+        preview.archive_path = tmp_file
+        json_ok(preview)
+
+    elseif step == "apply" then
+        local tmp_dir  = http.formvalue("tmp_dir") or ""
+        local node_id  = http.formvalue("node_id") or ""
+        local archive  = http.formvalue("archive_path") or ""
+
+        -- 安全检查
+        if not tmp_dir:match("^/tmp/mynet_node_import_%d+$") then
+            json_err("invalid tmp_dir"); return
+        end
+        if not node_id:match("^%d+$") then
+            json_err("invalid node_id"); return
+        end
+
+        local ok, err = node_m.import_apply(tmp_dir, node_id)
+        -- 清理上传的压缩包
+        if archive:match("^/tmp/mynet_node_upload_%d+%.") then
+            os.execute("rm -f '" .. archive .. "'")
+        end
+        if not ok then
+            json_err(err or "import failed"); return
+        end
+        json_ok({ success = true, node_id = node_id,
+                   message = "Config imported for node #" .. node_id })
+    else
+        json_err("invalid step: must be 'preview' or 'apply'")
+    end
+end
+
 -- ─────────────────────────────────────────────────────────────
 -- 服务控制 API（Dashboard 快速按钮用）
 -- ─────────────────────────────────────────────────────────────
 
 function api_svc_start()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local _, code = util.exec_status("/etc/init.d/mynet start 2>&1")
     json_ok({ success = code == 0, message = code == 0 and "mynet started" or ("start failed (code=" .. tostring(code) .. ")") })
 end
 
 function api_svc_stop()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local _, code = util.exec_status("/etc/init.d/mynet stop 2>&1")
     json_ok({ success = code == 0, message = code == 0 and "mynet stopped" or ("stop failed (code=" .. tostring(code) .. ")") })
 end
 
 function api_svc_restart()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local _, code = util.exec_status("/etc/init.d/mynet restart 2>&1")
     json_ok({ success = code == 0, message = code == 0 and "mynet restarted" or ("restart failed (code=" .. tostring(code) .. ")") })
 end
 
 function api_mynetd_start()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local mon = cfg_m.load_monitor_config()
     local bin = mon.mynetd_bin_path
     if not util.file_exists(bin) then
@@ -1467,7 +1639,7 @@ function api_mynetd_start()
 end
 
 function api_mynetd_stop()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local _, pid = get_mynetd_status()
     if pid then util.exec_status("kill " .. pid .. " 2>/dev/null") end
     util.exec_status("pkill -x mynetd 2>/dev/null")
@@ -1475,7 +1647,7 @@ function api_mynetd_stop()
 end
 
 function api_mynetd_restart()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local _, pid = get_mynetd_status()
     if pid then util.exec_status("kill " .. pid .. " 2>/dev/null") end
     util.exec_status("pkill -x mynetd 2>/dev/null")
@@ -1496,22 +1668,15 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function api_preflight()
-    if not require_api_auth() then return end
-    local raw_nid = http.formvalue("node_id") or ""
-    local node_id
-    if raw_nid ~= "" then
-        if not util.validate_node_id(raw_nid) then json_err("invalid node_id"); return end
-        node_id = tonumber(raw_nid)
-    else
-        node_id = cfg_m.get_node_id()
-    end
+    if not require_local_api() then return end
+    local node_id = parse_node_id(true) or cfg_m.get_node_id()
     if not node_id then json_err("node_id required"); return end
     local result = node_m.preflight_check(node_id)
     json_ok({ success = true, data = result })
 end
 
 function api_svc_state()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local s = node_m.get_svc_state()
     json_ok({ success = true, data = s })
 end
@@ -1521,16 +1686,8 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function api_heartbeat()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
-    local raw_nid = http.formvalue("node_id") or ""
-    local node_id
-    if raw_nid ~= "" then
-        if not util.validate_node_id(raw_nid) then json_err("invalid node_id"); return end
-        node_id = tonumber(raw_nid)
-    else
-        node_id = cfg_m.get_node_id()
-    end
+    if not require_api_auth() then return end
+    local node_id = parse_node_id(true) or cfg_m.get_node_id()
     if not node_id then json_err("node_id required"); return end
     local ok, err = sys_m.submit_heartbeat(node_id)
     if ok then
@@ -1545,7 +1702,7 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function api_dashboard_stats()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
     local node_id = cfg_m.get_node_id()
     local metrics = sys_m.collect_metrics(node_id)
@@ -1578,7 +1735,7 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function api_service_detail()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
     local node_id = cfg_m.get_node_id()
     local svc     = node_m.get_svc_state()
@@ -1612,7 +1769,7 @@ end
 
 -- 日志尾部 API
 function api_logs_tail()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local lines = tonumber(http.formvalue("lines")) or 100
     if lines > 500 then lines = 500 end
     local log_path = util.MYNET_HOME .. "/logs/luci.log"
@@ -1625,14 +1782,14 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function api_validate_config()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local validator = require("luci.model.mynet.validator")
     local result = validator.validate_config()
     json_ok({ success = true, data = result })
 end
 
 function api_auto_repair()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local validator = require("luci.model.mynet.validator")
     local issues = validator.validate_config()
     local repair = validator.auto_repair(issues)
@@ -1643,7 +1800,7 @@ end
 
 -- 诊断 API：检查文件完整性、运行测试、GNB 启动状态
 function api_diagnose()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
     local checks = {}
     local node_id = cfg_m.get_node_id()
@@ -1759,13 +1916,13 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function action_gnb_monitor()
-    local c = require_auth()
+    local c = auth_or_local()
     if not c then return end
     http.redirect(disp.build_url("admin/services/mynet/service") .. "?tab=peers")
 end
 
 function api_gnb_monitor_data()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
     local node_id = cfg_m.get_node_id()
     local gnb_root = util.GNB_DRIVER_ROOT
@@ -1812,7 +1969,7 @@ end
 
 -- 触发后台自动安装（防重入）
 function api_gnb_auto_install()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
     local gnb_m  = require("luci.model.mynet.gnb_installer")
     local result = gnb_m.start_auto_install()
@@ -1821,7 +1978,7 @@ end
 
 -- 安装系统依赖：kmod-tun / bash / curl-tls / ca-bundle（不安装 gnb）
 function api_install_system_deps()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
     local gnb_m  = require("luci.model.mynet.gnb_installer")
     local result = gnb_m.check_deps()
@@ -1830,28 +1987,28 @@ end
 
 -- 防火墙 Zone 一键配置（创建 zone + forwarding + include）
 function api_fw_setup()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local ok, msg = sys_m.ensure_firewall_zone()
     json_ok({ success = ok, message = msg or "" })
 end
 
 -- 防火墙 Zone 清除
 function api_fw_teardown()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local ok, msg = sys_m.remove_firewall_zone()
     json_ok({ success = ok, message = msg or "" })
 end
 
 -- 防火墙 masq 规则重新应用
 function api_fw_apply_masq()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
     local ok, msg = sys_m.apply_firewall_masq()
     json_ok({ success = ok, message = msg or "" })
 end
 
 -- 查询安装状态（前端轮询用）
 function api_gnb_install_status()
-    if not require_api_auth() then return end
+    if not require_local_api() then return end
 
     local gnb_m = require("luci.model.mynet.gnb_installer")
     json_ok({ success = true, data = gnb_m.get_status() })
@@ -1861,8 +2018,14 @@ end
 -- Proxy 分流管理 API / Page
 -- ─────────────────────────────────────────────────────────────
 
+function action_plugin()
+    local c = auth_or_local()
+    if not c then return end
+    tmpl.render("mynet/plugin", { is_guest = (c.guest == true) })
+end
+
 function action_proxy()
-    local c = require_auth()
+    local c = auth_or_local()
     if not c then return end
 
     local is_guest = c.guest == true
@@ -1880,17 +2043,28 @@ function action_proxy()
     local status  = proxy_m.get_status()
     local config  = proxy_m.load_config()
     local z       = zone_ctx()
+
+    -- 获取本地对端节点列表供 peer 下拉选择
+    local node_m  = require("luci.model.mynet.node")
+    local cfg_m   = require("luci.model.mynet.config")
+    local node_id = cfg_m.get_node_id()
+    local peers   = {}
+    if node_id then
+        peers = node_m.get_local_peers(node_id)
+    end
+
     tmpl.render("mynet/proxy", {
         is_guest     = false,
         proxy_status = status,
         proxy_config = config,
         zone         = z,
+        local_peers  = peers,
+        cur_node_id  = node_id,
     })
 end
 
 function api_proxy_status()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_local_api() then return end
 
     local proxy_m = require("luci.model.mynet.proxy")
     local st = proxy_m.get_status()
@@ -1898,33 +2072,15 @@ function api_proxy_status()
 end
 
 function api_proxy_start()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_local_api() then return end
 
-    local mode      = http.formvalue("mode")     or "client"
-    local region    = http.formvalue("region")    or "domestic"
-    local dns_mode  = http.formvalue("dns_mode")  or "none"
-    local dns_srv   = http.formvalue("dns_server") or ""
-    local peers     = http.formvalue("proxy_peers") or ""
-
-    -- 校验 mode / region / dns_mode
-    local valid_modes   = { client = true, server = true }
-    local valid_regions = { domestic = true, international = true }
-    local valid_dns     = { none = true, redirect = true, resolv = true }
-    if not valid_modes[mode]     then json_err("invalid mode"); return end
-    if not valid_regions[region] then json_err("invalid region"); return end
-    if not valid_dns[dns_mode]   then json_err("invalid dns_mode"); return end
-
+    local params = _proxy_params()
     local proxy_m = require("luci.model.mynet.proxy")
-    local ok, msg = proxy_m.start({
-        mode        = mode,
-        region      = region,
-        dns_mode    = dns_mode,
-        dns_server  = dns_srv,
-        proxy_peers = peers,
-    })
+    local ok, err = proxy_m.validate_params(params)
+    if not ok then json_err(err); return end
 
-    if ok then
+    local ok2, msg = proxy_m.start(params)
+    if ok2 then
         json_ok({ success = true, message = msg })
     else
         json_err(msg or "start failed")
@@ -1932,8 +2088,7 @@ function api_proxy_start()
 end
 
 function api_proxy_stop()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_local_api() then return end
 
     local proxy_m = require("luci.model.mynet.proxy")
     local ok, msg = proxy_m.stop()
@@ -1945,8 +2100,7 @@ function api_proxy_stop()
 end
 
 function api_proxy_reload()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_local_api() then return end
 
     local proxy_m = require("luci.model.mynet.proxy")
     local ok, msg = proxy_m.reload()
@@ -1957,9 +2111,59 @@ function api_proxy_reload()
     end
 end
 
+function api_proxy_enable()
+    if not require_local_api() then return end
+
+    local params = _proxy_params()
+    local proxy_m = require("luci.model.mynet.proxy")
+    local ok, msg = proxy_m.enable(params)
+    if ok then
+        json_ok({ success = true, message = msg })
+    else
+        json_err(msg or "enable failed")
+    end
+end
+
+function api_proxy_disable()
+    if not require_local_api() then return end
+
+    local proxy_m = require("luci.model.mynet.proxy")
+    local ok, msg = proxy_m.disable()
+    if ok then
+        json_ok({ success = true, message = msg })
+    else
+        json_err(msg or "disable failed")
+    end
+end
+
+function api_proxy_net_detect()
+    if not require_local_api() then return end
+
+    local dtype = http.formvalue("type") or "domestic"
+    local proxy_m = require("luci.model.mynet.proxy")
+    local data, err = proxy_m.net_detect(dtype)
+    if data then
+        json_ok({ success = true, data = data })
+    else
+        json_err(err or "detection failed")
+    end
+end
+
+function api_proxy_net_check()
+    if not require_local_api() then return end
+
+    local host = http.formvalue("host") or ""
+    local proxy_m = require("luci.model.mynet.proxy")
+    local data, err = proxy_m.net_check(host)
+    if err then
+        json_err(err)
+    else
+        json_ok({ success = true, data = data })
+    end
+end
+
 function api_proxy_diagnose()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_local_api() then return end
 
     local ip = http.formvalue("ip")
     if not ip or not ip:match("^%d+%.%d+%.%d+%.%d+$") then
@@ -1977,41 +2181,29 @@ function api_proxy_diagnose()
 end
 
 function api_proxy_config()
-    local c = cred_m.load()
-    if not c or not cred_m.is_valid(c) then json_err("not authenticated", 401); return end
+    if not require_local_api() then return end
 
     local proxy_m = require("luci.model.mynet.proxy")
     local method = http.getenv("REQUEST_METHOD")
 
     if method == "POST" then
-        -- 保存配置
-        local mode       = http.formvalue("proxy_mode")  or "client"
-        local region     = http.formvalue("node_region")  or "domestic"
-        local dns_mode   = http.formvalue("dns_mode")     or "none"
-        local dns_srv    = http.formvalue("dns_server")   or ""
-        local peers      = http.formvalue("proxy_peers")  or ""
-        local enabled_s  = http.formvalue("proxy_enabled")
+        local params = _proxy_params()
+        local ok, err = proxy_m.validate_params(params)
+        if not ok then json_err(err); return end
 
-        local valid_modes   = { client = true, server = true }
-        local valid_regions = { domestic = true, international = true }
-        local valid_dns     = { none = true, redirect = true, resolv = true }
-        if not valid_modes[mode]     then json_err("invalid mode"); return end
-        if not valid_regions[region] then json_err("invalid region"); return end
-        if not valid_dns[dns_mode]   then json_err("invalid dns_mode"); return end
+        local enabled_s = http.formvalue("proxy_enabled")
+        local fields = {}
+        if params.mode      then fields.proxy_mode  = params.mode end
+        if params.region    then fields.node_region  = params.region end
+        if params.dns_mode  then fields.dns_mode     = params.dns_mode end
+        if params.dns_server then fields.dns_server  = params.dns_server end
+        if params.proxy_peers then fields.proxy_peers = params.proxy_peers end
+        if enabled_s then fields.proxy_enabled = (enabled_s == "1" or enabled_s == "true") end
 
-        proxy_m.save_config({
-            proxy_enabled = (enabled_s == "1" or enabled_s == "true"),
-            proxy_mode    = mode,
-            node_region   = region,
-            dns_mode      = dns_mode,
-            dns_server    = dns_srv,
-            proxy_peers   = peers,
-        })
+        proxy_m.update_config(fields)
         json_ok({ success = true, message = "config saved" })
     else
-        -- 返回当前配置
-        local cfg = proxy_m.load_config()
-        json_ok({ success = true, data = cfg })
+        json_ok({ success = true, data = proxy_m.load_config() })
     end
 end
 
@@ -2021,28 +2213,15 @@ end
 
 -- Guest 页面（不需要 MyNet 登录）
 function action_guest()
-    -- 确保访问 /guest 时模式切回 guest（修复从 mynet 模式回不来的 bug）
-    if cfg_m.get_mode() ~= "guest" then
-        cfg_m.set_mode("guest")
-    end
-
     local guest_m = require("luci.model.mynet.guest")
     local g       = guest_m.load_config()
     local gnb_bin = cfg_m.get_gnb_bin()
-
-    -- GNB 进程状态（pgrep -x 精确匹配二进制名，避免匹配自身）
-    local vpn_running = false
-    if g and g.local_node_id then
-        local ps = util.trim(util.exec("pgrep gnb 2>/dev/null") or "")
-        vpn_running = ps ~= ""
-    end
 
     tmpl.render("mynet/guest", {
         mode          = cfg_m.get_mode(),
         guest         = g,
         initialized   = guest_m.is_initialized(),
         gnb_installed = util.file_exists(gnb_bin),
-        vpn_running   = vpn_running,
     })
 end
 
@@ -2059,9 +2238,16 @@ function api_guest_init()
     local port    = tonumber(http.formvalue("listen_port"))   or 9001
     local local_i = tonumber(http.formvalue("local_index"))   or 1
     local start_id = tonumber(http.formvalue("start_id"))
+    local index_addr = http.formvalue("index_addr") or ""
 
     -- 输入清洁
     name = name:gsub("[^%w%s%-_]", ""):sub(1, 32)
+    -- index_addr 默认值
+    if index_addr == "" then index_addr = "idx.mynet.club:9016" end
+    -- index_addr 格式校验: host:port（支持 IP 或域名）
+    if not index_addr:match("^[%w%.%-]+:%d+$") then
+        json_err("Index address format: host:port (IP or domain)"); return
+    end
 
     local result, err = guest_m.init_network({
         node_count   = count,
@@ -2070,6 +2256,7 @@ function api_guest_init()
         listen_port  = port,
         local_index  = local_i,
         start_id     = start_id,
+        index_addr   = index_addr,
     })
     if err then json_err(err); return end
     json_ok({ success = true, data = result })
@@ -2164,9 +2351,8 @@ function api_guest_use()
         json_err("rate limit", 429); return
     end
     local guest_m = require("luci.model.mynet.guest")
-    local raw_nid = http.formvalue("node_id") or ""
-    local node_id = tonumber(raw_nid)
-    if not node_id then json_err("node_id required"); return end
+    local node_id = parse_node_id()
+    if not node_id then return end
 
     local g = guest_m.load_config()
     if not g or not g.nodes then
@@ -2274,8 +2460,9 @@ function api_guest_import()
     local step = http.formvalue("step") or "preview"
 
     if step == "preview" then
-        -- 接收 base64 编码的 tar.gz 文件
+        -- 接收 base64 编码的压缩包
         local b64_data = http.formvalue("file_data") or ""
+        local filename = http.formvalue("filename") or ""
         if b64_data == "" then
             json_err("no file data"); return
         end
@@ -2291,10 +2478,11 @@ function api_guest_import()
         if not raw or #raw == 0 then
             json_err("base64 decode failed"); return
         end
-        local tmp_tar = "/tmp/mynet_import_" .. os.time() .. ".tar.gz"
+        local suffix = filename:lower():match("%.zip$") and ".zip" or ".tar.gz"
+        local tmp_tar = "/tmp/mynet_import_" .. os.time() .. suffix
         util.write_file(tmp_tar, raw)
 
-        local preview, err = guest_m.import_preview(tmp_tar)
+        local preview, err = guest_m.import_preview(tmp_tar, filename)
         -- 保留 tar.gz 用于 apply 阶段
         if not preview then
             os.execute("rm -f '" .. tmp_tar .. "'")
@@ -2302,6 +2490,7 @@ function api_guest_import()
         end
         -- 把 tar 路径也存入 preview 供前端回传
         preview.tar_path = tmp_tar
+        preview.success = true
         json_ok(preview)
 
     elseif step == "apply" then
@@ -2318,8 +2507,8 @@ function api_guest_import()
         end
 
         local ok, err = guest_m.import_apply(tmp_dir, node_id)
-        -- 清理 tar.gz
-        if tar_path:match("^/tmp/mynet_import_%d+%.tar%.gz$") then
+        -- 清理压缩包
+        if tar_path:match("^/tmp/mynet_import_%d+%.") then
             os.execute("rm -f '" .. tar_path .. "'")
         end
         if not ok then

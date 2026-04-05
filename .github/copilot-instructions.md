@@ -99,6 +99,45 @@ end
 
 ---
 
+## ⚠️ 开发流程规范（Process Rules）
+
+### 9. 写功能前必须先通读现有代码（Critical Process）
+```lua
+-- ❌ 禁止：未查看现有模块就创建新的辅助函数
+-- 示例：controller 里新建 check_service_preconditions()，
+-- 但 validator.validate_config() / node.preflight_check() 已有完整检查
+
+-- ✅ 必须：写新函数前先搜索现有模块
+-- 1. 搜索 model/mynet/*.lua 中所有已有函数签名
+-- 2. 搜索 util.lua 中已有常量和工具函数
+-- 3. 确认无重复后再创建新函数
+```
+**已有的校验/检查函数速查**（禁止重复实现）：
+- `validator.validate_config()` — 10 项配置完整性检查
+- `node.preflight_check(node_id)` — 7 项启动前置检查（gnb/node.conf/route.conf/密钥/kmod-tun）
+- `system.check_deps(node_id)` — 6 项依赖检查
+- `system.run_health_check()` — 聚合健康检查
+- `config.load_vpn_conf()` — 加载 mynet.conf
+- `config.get_vpn_interface()` — 获取接口名（默认 "gnb_tun"）
+- `config.get_node_id()` — 获取 NODE_ID
+- `node.get_vpn_service_status()` — "running"/"stopped"
+
+### 10. 脚本路径使用固定常量，不猜测搜索
+```lua
+-- ❌ 禁止：多路径猜测搜索脚本
+local function find_fw_script()
+    local paths = { p1, p2, p3 }
+    for _, p in ipairs(paths) do ... end
+end
+
+-- ✅ 必须：使用 util.lua 中的固定路径常量
+util.ROUTE_SCRIPT     -- /etc/mynet/scripts/route.mynet
+util.FIREWALL_SCRIPT  -- /etc/mynet/scripts/firewall.mynet
+```
+ipk 安装时已将脚本部署到 `scripts/` 目录，无需运行时搜索。
+
+---
+
 ## ✅ 必须遵守的规范
 
 ### node_id 处理
@@ -148,18 +187,40 @@ luasrc/
     gnb_installer.lua     GNB 自动检测安装
     node.lua              节点管理（nid() helper 在顶部）
     system.lua            系统信息/依赖检查
-    util.lua              基础工具（int_str/json/exec/file IO）
+    util.lua              基础工具（int_str/json/exec/file IO/路径常量）
+    validator.lua         配置完整性校验（10项检查）
     zone.lua              Zone 管理
   view/mynet/
     index.htm             Dashboard
     login.htm             登录
     node.htm              节点配置（主要操作页）
     wizard.htm            首次配置向导
-    service.htm / network.htm / settings.htm / status.htm / gnb_monitor.htm
+    service.htm / settings.htm / guest.htm / diagnose.htm
 
 htdocs/luci-static/resources/mynet/
   css/mynet.css
   js/mynet.js             前端：mnApi / mnNodeSwitch / mnNodeGenKey 等
 
+scripts/_src/             平台脚本源码（开发时编辑这里）
+  common/                 跨平台工具（bash 语法，非 OpenWrt sh）
+  openwrt/
+    service-manager.sh    手动部署/升级用（需 bash）
+    runtime/
+      rc.mynet            → /etc/init.d/mynet（init 脚本）
+      route.mynet         → /etc/mynet/scripts/route.mynet（路由管理）
+      firewall.mynet      → /etc/mynet/scripts/firewall.mynet（防火墙管理）
+
 root/etc/mynet/conf/config.json   设备本地配置
+```
+
+### util.lua 路径常量（运行时）
+```
+MYNET_HOME        = /etc/mynet
+CONF_DIR          = /etc/mynet/conf
+VPN_CONF          = /etc/mynet/conf/mynet.conf
+SCRIPTS_DIR       = /etc/mynet/scripts
+ROUTE_SCRIPT      = /etc/mynet/scripts/route.mynet
+FIREWALL_SCRIPT   = /etc/mynet/scripts/firewall.mynet
+GNB_DRIVER_ROOT   = /etc/mynet/driver/gnb
+GNB_CONF_DIR      = /etc/mynet/driver/gnb/conf
 ```

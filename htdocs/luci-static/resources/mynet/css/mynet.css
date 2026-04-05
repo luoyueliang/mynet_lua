@@ -81,6 +81,18 @@
 .mn-section-body    { padding: 0 1.25rem 1rem; }
 .mn-section-actions { padding: .5rem 1.25rem 1rem; display: flex; gap: 6px; }
 
+/* ─── Proxy page table layout ────────────────────────────── */
+.mn-proxy-table .th { width: 30%; }
+.mn-proxy-table .td { width: 70%; text-align: left; }
+.mn-proxy-table .td .mn-hint-inline { margin-left: 0.5em; }
+
+/* ─── Small action button (inline within tables) ─────────── */
+.mn-btn-sm { padding: 2px 10px; font-size: 0.85em; }
+
+/* ─── Button/form group helpers ──────────────────────────── */
+.mn-btn-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mn-inline-form { display: flex; gap: 8px; align-items: center; }
+
 /* ─── Badges ─────────────────────────────────────────────── */
 .mn-badge {
     display: inline-block;
@@ -126,7 +138,7 @@
 }
 
 /* ─── Dependency list ────────────────────────────────────── */
-.mn-dep-list { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.mn-dep-list { display: flex; flex-wrap: wrap; gap: 4px 10px; justify-content: center; }
 .mn-dep-item {
     display: inline-flex;
     align-items: center;
@@ -227,47 +239,46 @@
     color: #f1f5f9;
     font-size: 13px;
     font-weight: 600;
+    max-width: 480px;
     box-shadow: 0 15px 35px rgba(50,50,93,.1), 0 5px 15px rgba(0,0,0,.07);
     animation: mnFadeIn .2s ease;
 }
 .mn-toast-error { background: #f5365c; }
+.mn-toast-success { background: #2dce89; color: #fff; }
+.mn-toast-msg { line-height: 1.5; }
+.mn-toast-detail {
+    margin-top: 6px;
+    font-size: 11px;
+    font-weight: 400;
+    opacity: .85;
+    line-height: 1.4;
+    word-break: break-word;
+}
 @keyframes mnFadeIn {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ─── Health check section ───────────────────────────────── */
-.mn-health-section { margin-bottom: 8px; }
-.mn-health-list { padding: 0 1.25rem 1rem; display: flex; flex-direction: column; gap: 8px; }
-.mn-health-item {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 14px; border-radius: 6px; font-size: 0.92em;
+/* ─── Button loading spinner ─────────────────────────────── */
+.mn-btn-loading { position: relative; pointer-events: none; opacity: .75; }
+.mn-btn-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: mnSpin .6s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
 }
-.mn-health-error { background: rgba(239,68,68,.08); border-left: 3px solid #ef4444; }
-.mn-health-warn  { background: rgba(245,158,11,.08); border-left: 3px solid #f59e0b; }
-.mn-health-ok    { background: rgba(34,197,94,.08);  border-left: 3px solid #22c55e; }
-.mn-health-icon  { font-size: 1.1em; flex-shrink: 0; }
-.mn-health-text  { flex: 1; }
-.mn-health-btn   { padding: 2px 12px; font-size: 0.85em; white-space: nowrap; }
-
-/* ─── Local / offline mode banner ────────────────────────── */
-.mn-offline-banner, .mn-local-banner {
-    background: rgba(59,130,246,.06);
-    border: 1px solid rgba(59,130,246,.25);
-    border-radius: 8px;
-    padding: 14px 20px;
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 16px;
-}
-.mn-offline-banner .mn-offline-text,
-.mn-local-banner .mn-offline-text {
-    flex: 1;
-    font-size: 0.92em;
-    color: #5b7083;
-}
+/* dark bg buttons (cbi-button-apply/remove/action) get white spinner */
+.cbi-button-apply .mn-btn-spinner,
+.cbi-button-remove .mn-btn-spinner,
+.cbi-button-action .mn-btn-spinner { border-color: rgba(255,255,255,.3); border-top-color: #fff; }
+/* light bg buttons get dark spinner */
+.cbi-button .mn-btn-spinner { border-color: rgba(0,0,0,.15); border-top-color: #333; }
+@keyframes mnSpin { to { transform: rotate(360deg); } }
 
 /* ─── Login page (special layout, not cbi-based) ─────────── */
 .mn-login-wrap {
@@ -331,10 +342,5 @@
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
-    }
-    /* Health check items stack */
-    .mn-health-item {
-        flex-direction: column;
-        align-items: flex-start;
     }
 }
