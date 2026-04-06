@@ -74,8 +74,8 @@ bash debug/sync.sh all
 ```bash
 # 方式 1：IPK 包安装
 # 从 GitHub Releases 下载 .ipk
-scp luci-app-mynet_1.0.0-1_all.ipk root@router:/tmp/
-ssh root@router "opkg install /tmp/luci-app-mynet_1.0.0-1_all.ipk"
+scp luci-app-mynet_2.0.0-1_all.ipk root@router:/tmp/
+ssh root@router "opkg install /tmp/luci-app-mynet_2.0.0-1_all.ipk"
 
 # 方式 2：手动复制
 bash debug/sync.sh all  # 或手动 scp 各目录
@@ -108,7 +108,7 @@ bash debug/sync.sh all  # 或手动 scp 各目录
 
 ### 国际化
 - 模板使用 `<%:String%>` LuCI 翻译标签
-- PO 文件：`po/zh-cn/mynet.po`（380+ 翻译条目）
+- PO 文件：`po/zh-cn/mynet.po`（460+ 翻译条目）
 
 ## 文档
 
@@ -119,4 +119,4 @@ bash debug/sync.sh all  # 或手动 scp 各目录
 
 ## 版本
 
-v1.0.0 — 2026-04
+v2.0.0 — 2026-04

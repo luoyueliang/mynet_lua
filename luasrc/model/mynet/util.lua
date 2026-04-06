@@ -9,7 +9,7 @@ local M = {}
 -- ─────────────────────────────────────────────────────────────
 
 M.MYNET_HOME  = "/etc/mynet"
-M.APP_VERSION = "1.0.0"
+M.APP_VERSION = "2.0.0"
 M.CONF_DIR    = M.MYNET_HOME .. "/conf"
 M.CRED_FILE   = M.CONF_DIR  .. "/credential.json"
 M.CONFIG_FILE = M.CONF_DIR  .. "/config.json"

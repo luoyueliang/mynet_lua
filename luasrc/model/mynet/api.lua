@@ -26,7 +26,7 @@ local function do_curl(method, url, json_body, extra_headers, accept_type, timeo
 
     -- 请求头
     local headers = {
-        ["User-Agent"] = "mynet-luci/1.0.0",
+        ["User-Agent"] = "mynet-luci/2.0.0",
         ["Accept"]     = accept_type or "application/json",
     }
     for k, v in pairs(extra_headers or {}) do
