@@ -55,7 +55,7 @@ local cur_nid = cur_node_id
                 <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer">
                     <input type="checkbox" id="mn-cfg-enabled"
                         <%=cfg.proxy_enabled and 'checked' or ''%>>
-                    <span id="mn-cfg-enabled-label"><%=cfg.proxy_enabled and 'Enabled' or 'Disabled'%></span>
+                    <span id="mn-cfg-enabled-label"><%=cfg.proxy_enabled and translate('Enabled') or translate('Disabled')%></span>
                 </label>
                 <span class="mn-muted mn-small mn-hint-inline"><%:Auto-start proxy when GNB starts%></span>
             </td>
@@ -233,6 +233,7 @@ local cur_nid = cur_node_id
     </table>
 </div>
 
+<%+mynet/_i18n_js%>
 <script src="<%=resource%>/mynet/js/mynet.js"></script>
 <script>
 (function(){
@@ -258,7 +259,7 @@ local cur_nid = cur_node_id
 
     /* ─── Enable checkbox label ─── */
     document.getElementById('mn-cfg-enabled').addEventListener('change', function(){
-        document.getElementById('mn-cfg-enabled-label').textContent = this.checked ? 'Enabled' : 'Disabled';
+        document.getElementById('mn-cfg-enabled-label').textContent = this.checked ? '<%:Enabled%>' : '<%:Disabled%>';
     });
 
     /* ─── Collect form params ─── */
@@ -294,7 +295,7 @@ local cur_nid = cur_node_id
         if (!ip) return;
         var el = document.getElementById('mn-diag-result');
         el.style.display = 'block';
-        el.textContent = 'Checking...';
+        el.textContent = '<%:Checking…%>';
         mnFetch(apiBase + 'proxy_diagnose', 'POST', { ip: ip },
             function(r){
                 if (r.data && r.data.checks) {

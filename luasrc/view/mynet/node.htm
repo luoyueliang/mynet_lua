@@ -1,5 +1,6 @@
 <%+header%>
 <link rel="stylesheet" href="<%=resource%>/mynet/css/mynet.css">
+<%+mynet/_i18n_js%>
 <script src="<%=resource%>/mynet/js/mynet.js" defer></script>
 
 <h2><%:Node%></h2>
@@ -520,49 +521,49 @@ window.mnNodeImportFile = function(input) {
 
     var name = file.name.toLowerCase();
     if (!/\.(tar\.gz|tgz|gz|zip)$/.test(name)) {
-        mnShowToast('不支持的格式，请选择 .tar.gz / .tgz / .gz / .zip', 'error');
+        mnShowToast('<%:Unsupported format. Please select .tar.gz / .tgz / .gz / .zip%>', 'error');
         return;
     }
     if (file.size > 768000) {
-        mnShowToast('文件过大（最大 750KB）', 'error');
+        mnShowToast('<%:File too large (max 750KB)%>', 'error');
         return;
     }
 
     var reader = new FileReader();
     reader.onload = function() {
         var b64 = reader.result.split(',')[1] || '';
-        mnShowToast('正在解析配置包…');
+        mnShowToast('<%:Parsing config package…%>');
         mnFetch(_mnApiBase() + 'node_import', 'POST',
             { step: 'preview', file_data: b64, filename: file.name },
             function(data) {
                 if (!data.node_id) {
-                    mnShowToast(data.message || '解析失败', 'error');
+                    mnShowToast(data.message || '<%:Parse failed%>', 'error');
                     return;
                 }
-                var msg = '节点 #' + data.node_id + '\n';
+                var msg = '<%:Node%> #' + data.node_id + '\n';
                 msg += '  node.conf: ' + (data.has_node_conf ? '✓' : '✗') + '\n';
                 msg += '  route.conf: ' + (data.has_route ? '✓' : '✗') + '\n';
                 msg += '  address.conf: ' + (data.has_address ? '✓' : '✗') + '\n';
-                msg += '  私钥: ' + (data.has_private_key ? '✓' : '✗') + '\n';
-                msg += '  公钥: ' + (data.has_public_key ? '✓' : '✗') + '\n';
-                if (data.peer_key_count > 0) msg += '  对端公钥: ' + data.peer_key_count + ' 个\n';
+                msg += '  <%:Private Key%>: ' + (data.has_private_key ? '✓' : '✗') + '\n';
+                msg += '  <%:Public Key%>: ' + (data.has_public_key ? '✓' : '✗') + '\n';
+                if (data.peer_key_count > 0) msg += '  <%:Peer Keys%>: ' + data.peer_key_count + '\n';
                 if (data.is_different_node) {
-                    msg += '\n⚠ 当前节点为 #' + data.current_node_id + '，导入后将切换到 #' + data.node_id;
+                    msg += '\n⚠ <%:Current node is%> #' + data.current_node_id + ', <%:will switch to%> #' + data.node_id;
                 }
-                msg += '\n确认导入？';
+                msg += '\n<%:Confirm import?%>';
                 if (!confirm(msg)) {
-                    mnShowToast('已取消');
+                    mnShowToast('<%:Cancelled%>');
                     return;
                 }
-                mnShowToast('正在导入…');
+                mnShowToast('<%:Importing…%>');
                 mnFetch(_mnApiBase() + 'node_import', 'POST',
                     { step: 'apply', tmp_dir: data.tmp_dir, node_id: data.node_id, archive_path: data.archive_path || '' },
                     function(res) {
                         if (res.success) {
-                            mnShowToast('配置包已导入，节点 #' + res.node_id, 'success');
+                            mnShowToast('<%:Config package imported, node%> #' + res.node_id, 'success');
                             setTimeout(function() { location.reload(); }, 1500);
                         } else {
-                            mnShowToast(res.message || '导入失败', 'error');
+                            mnShowToast(res.message || '<%:Import failed%>', 'error');
                         }
                     },
                     function(err) { mnShowToast(err, 'error'); }
@@ -590,7 +591,7 @@ window.mnNodeSaveConfig = function(configType) {
     if (configType === 'node') {
         var m = content.match(/^\s*nodeid\s+(\d+)/m);
         if (!m) {
-            mnShowToast('node.conf 必须包含 nodeid 行 (例: nodeid 1001)', 'error');
+            mnShowToast('<%:node.conf must contain a nodeid line (e.g. nodeid 1001)%>', 'error');
             return;
         }
     }
@@ -603,7 +604,7 @@ window.mnNodeSaveConfig = function(configType) {
             if (!line) continue;
             var parts = line.split('|');
             if (parts.length >= 3 && parts[0].trim() !== window.mnCurrentNodeId) {
-                if (!confirm('route.conf 第一条记录的节点 ID (' + parts[0].trim() + ') 与当前节点 (' + window.mnCurrentNodeId + ') 不一致。\n仍然保存？')) {
+                if (!confirm('<%:route.conf first record node ID%> (' + parts[0].trim() + ') <%:does not match current node%> (' + window.mnCurrentNodeId + ').\\n<%:Save anyway?%>')) {
                     return;
                 }
             }
@@ -619,7 +620,7 @@ window.mnNodeSaveConfig = function(configType) {
                 return;
             }
             if (data.node_id_set) {
-                mnShowToast('node.conf 已保存，当前节点已设为 #' + data.node_id_set);
+                mnShowToast('<%:node.conf saved, current node set to%> #' + data.node_id_set);
                 setTimeout(function(){ location.reload(); }, 1500);
             } else {
                 mnShowToast(data.message || 'OK');

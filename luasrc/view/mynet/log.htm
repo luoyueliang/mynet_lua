@@ -39,6 +39,7 @@ local log_url  = luci.dispatcher.build_url('admin/services/mynet/log')
 </div>
 
 <div id="mn-toast" class="mn-toast mn-hidden"></div>
+<%+mynet/_i18n_js%>
 <script src="<%=resource%>/mynet/js/mynet.js"></script>
 <script>
 (function(){
@@ -49,7 +50,7 @@ local log_url  = luci.dispatcher.build_url('admin/services/mynet/log')
 
     window.mnLogToggleAuto = function(btn) {
         _enabled = !_enabled;
-        btn.textContent = _enabled ? 'Auto ON (30s)' : '<%:Auto (30s)%>';
+        btn.textContent = _enabled ? _t('Auto ON') + ' (30s)' : '<%:Auto (30s)%>';
         if (_enabled) {
             _countdown = 30;
             _startCountdown();

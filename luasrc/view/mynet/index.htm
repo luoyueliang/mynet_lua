@@ -258,7 +258,7 @@
     window.mnFwSetup = function(btn) {
         btn.disabled = true;
         var st = document.getElementById('mn-fw-setup-status');
-        if (st) st.textContent = '配置中...';
+        if (st) st.textContent = '<%:Configuring…%>';
         mnApi('fw_setup', null, btn);
         setTimeout(function(){ location.reload(); }, 3000);
     };
@@ -281,6 +281,7 @@
 
     <div id="mn-toast" class="mn-toast mn-hidden"></div>
 
+    <%+mynet/_i18n_js%>
     <script src="<%=resource%>/mynet/js/mynet.js"></script>
     <script>
         setInterval(function () { mnRefreshStatus(); }, 15000);

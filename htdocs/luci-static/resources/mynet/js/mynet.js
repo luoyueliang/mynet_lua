@@ -7,6 +7,11 @@
 
 /* ─── 基础 Fetch 封装 ─────────────────────────────────────── */
 
+/** _t — i18n 翻译查找（window._mnI18n 由页面模板注入） */
+function _t(key) {
+    return (window._mnI18n && window._mnI18n[key]) || key;
+}
+
 /**
  * mnFetch — 向 LuCI AJAX 端点发送请求
  * @param {string}   url      - 完整 URL
@@ -109,7 +114,7 @@ function mnApi(action, params, btn) {
     var now = Date.now();
     /* 去重：同一 action 请求尚未返回 */
     if (_mnApiInflight[action]) {
-        mnShowToast('请求进行中，请稍候…');
+        mnShowToast(_t('Request in progress, please wait'));
         return;
     }
     /* 防抖：距上次调用 < 1s */
@@ -142,7 +147,7 @@ function mnApi(action, params, btn) {
                 setTimeout(function () { window.location.reload(); }, 2000);
             } else {
                 mnShowToast(
-                    data.message || 'Operation failed',
+                    data.message || _t('Operation failed'),
                     'error',
                     { detail: data.detail || '', duration: 10000 }
                 );
@@ -151,7 +156,7 @@ function mnApi(action, params, btn) {
         function (err) {
             _mnApiInflight[action] = false;
             _mnBtnRestore(btn);
-            mnShowToast('Network error: ' + err, 'error', { duration: 8000 });
+            mnShowToast(_t('Network error: ') + err, 'error', { duration: 8000 });
         }
     );
 }
@@ -187,7 +192,7 @@ function _updateStatusDots(running) {
 
     var nodeLabel = document.getElementById('mn-vpn-label');
     if (nodeLabel) {
-        nodeLabel.textContent = running ? 'Running' : 'Stopped';
+        nodeLabel.textContent = running ? _t('Running') : _t('Stopped');
         nodeLabel.className   = running ? 'mn-dep-ok' : 'mn-dep-fail';
     }
 
@@ -217,7 +222,7 @@ function mnAutoInstallGnb() {
     if (!panel) return;
 
     panel.classList.remove('mn-hidden');
-    _gnbSetMsg('正在触发 GNB 自动安装…', false);
+    _gnbSetMsg(_t('Triggering GNB auto-install…'), false);
 
     var baseUrl = _mnApiBase();
 
@@ -225,22 +230,22 @@ function mnAutoInstallGnb() {
     mnFetch(baseUrl + 'gnb_auto_install', 'POST', {},
         function (data) {
             if (data.status === 'already_ok') {
-                _gnbSetMsg('gnb_ctl 已安装 ✓', false);
+                _gnbSetMsg(_t('gnb_ctl installed') + ' ✓', false);
                 _gnbMarkDepOk('gnb_ctl');
                 setTimeout(function () { panel.classList.add('mn-hidden'); }, 3000);
                 return;
             }
             if (data.status === 'error') {
-                _gnbSetMsg('自动安装失败: ' + (data.message || ''), true);
+                _gnbSetMsg(_t('Auto-install failed: ') + (data.message || ''), true);
                 return;
             }
             // started 或 already_running → 开始轮询
             var archHint = data.arch ? (' (' + (data.os_name || '') + '/' + data.arch + ')') : '';
-            _gnbSetMsg('正在安装 GNB' + archHint + '…', false);
+            _gnbSetMsg(_t('Installing GNB') + archHint + '…', false);
             _gnbPollStatus();
         },
         function (err) {
-            _gnbSetMsg('请求失败: ' + err, true);
+            _gnbSetMsg(_t('Request failed: ') + err, true);
         }
     );
 }
@@ -269,7 +274,7 @@ function _gnbPollStatus() {
                 if (d.gnb_exists) {
                     // 安装成功
                     clearInterval(_gnbInstallTimer); _gnbInstallTimer = null;
-                    _gnbSetMsg('GNB 安装完成 ✓', false);
+                    _gnbSetMsg(_t('GNB install complete') + ' ✓', false);
                     _gnbMarkDepOk('gnb_ctl');
                     window.mnGnbCtlOk = true;
                     setTimeout(function () {
@@ -281,14 +286,14 @@ function _gnbPollStatus() {
 
                 if (d.done && d.failed) {
                     clearInterval(_gnbInstallTimer); _gnbInstallTimer = null;
-                    _gnbSetMsg('安装失败，查看日志', true);
+                    _gnbSetMsg(_t('Install failed, check log'), true);
                     return;
                 }
 
                 if (!d.running && d.done) {
                     // 安装脚本退出但未检测到 gnb_exists（可能延迟）
                     clearInterval(_gnbInstallTimer); _gnbInstallTimer = null;
-                    _gnbSetMsg('安装脚本已完成，刷新页面检查', false);
+                    _gnbSetMsg(_t('Install script finished, refresh to check'), false);
                     return;
                 }
             },
@@ -383,7 +388,7 @@ function mnNodeRefreshConfig(cfgType, btn) {
             if (btn) { btn.disabled = false; btn.textContent = orig; }
             if (statusEl) {
                 if (data.success) {
-                    statusEl.textContent = '✓ updated';
+                    statusEl.textContent = '✓ ' + _t('updated');
                     statusEl.className = 'mn-config-status mn-dep-ok mn-small';
                 } else {
                     statusEl.textContent = '✗ ' + (data.error || data.message || 'failed');
@@ -410,14 +415,14 @@ function mnNodeRefreshAll() {
     var nodeId = window.mnCurrentNodeId;
     if (!nodeId) { return; }
     var gEl = document.getElementById('mn-node-global-status');
-    if (gEl) { gEl.textContent = 'Refreshing…'; gEl.className = 'mn-small mn-muted'; }
+    if (gEl) { gEl.textContent = _t('Refreshing…'); gEl.className = 'mn-small mn-muted'; }
 
     mnFetch(_mnApiBase() + 'node_config', 'POST',
         { node_id: nodeId, type: 'all' },
         function (data) {
             if (gEl) {
                 if (data.success) {
-                    gEl.textContent = '✓ All configs refreshed (' + (data.files ? data.files.length : 0) + ' files)';
+                    gEl.textContent = '✓ ' + _t('All configs refreshed') + ' (' + (data.files ? data.files.length : 0) + ' ' + _t('files') + ')';
                     gEl.className = 'mn-small mn-dep-ok';
                     setTimeout(function () { window.location.reload(); }, 800);
                 } else {
@@ -442,10 +447,10 @@ function mnNodeSwitch() {
 
     var selOpt  = sel.options[sel.selectedIndex];
     var label   = selOpt ? selOpt.text.trim() : nodeId;
-    if (!window.confirm('Switch to node:\n' + label + '\n\nThis will save the new node configuration. Continue?')) return;
+    if (!window.confirm(_t('Switch to node:') + '\n' + label + '\n\n' + _t('This will save the new node configuration. Continue?'))) return;
 
     var resEl = document.getElementById('mn-switch-result');
-    if (resEl) { resEl.textContent = 'Switching…'; resEl.className = 'mn-small mn-muted'; resEl.style.display = 'block'; }
+    if (resEl) { resEl.textContent = _t('Switching…'); resEl.className = 'mn-small mn-muted'; resEl.style.display = 'block'; }
 
     mnFetch(_mnApiBase() + 'node_switch', 'POST',
         { node_id: nodeId },
@@ -491,21 +496,21 @@ function mnNodeSavePrivKey(mode) {
     function _doSave(hexStr) {
         hexStr = hexStr.replace(/\s+/g, '');
         if (!hexStr) {
-            if (statusEl) { statusEl.textContent = 'Key is empty'; statusEl.className = 'mn-small mn-dep-fail'; }
+            if (statusEl) { statusEl.textContent = _t('Key is empty'); statusEl.className = 'mn-small mn-dep-fail'; }
             return;
         }
         if (hexStr.length !== 128 || !/^[0-9a-fA-F]{128}$/.test(hexStr)) {
-            if (statusEl) { statusEl.textContent = '\u2717 Must be 128 hex characters (got ' + hexStr.length + ')'; statusEl.className = 'mn-small mn-dep-fail'; }
+            if (statusEl) { statusEl.textContent = '\u2717 ' + _t('Must be 128 hex chars') + ' (got ' + hexStr.length + ')'; statusEl.className = 'mn-small mn-dep-fail'; }
             return;
         }
-        if (statusEl) { statusEl.textContent = 'Saving…'; statusEl.className = 'mn-small mn-muted'; }
+        if (statusEl) { statusEl.textContent = _t('Saving…'); statusEl.className = 'mn-small mn-muted'; }
 
         mnFetch(_mnApiBase() + 'node_save_key', 'POST',
             { node_id: nodeId, key_hex: hexStr },
             function (data) {
                 if (statusEl) {
                     if (data.success) {
-                        statusEl.textContent = '✓ Saved';
+                        statusEl.textContent = '✓ ' + _t('Saved');
                         statusEl.className = 'mn-small mn-dep-ok';
                         setTimeout(function () { window.location.reload(); }, 800);
                     } else {
@@ -528,7 +533,7 @@ function mnNodeSavePrivKey(mode) {
             reader.readAsText(fileInput.files[0]);
             return;
         }
-        if (statusEl) { statusEl.textContent = 'No file selected'; statusEl.className = 'mn-small mn-dep-fail'; }
+        if (statusEl) { statusEl.textContent = _t('No file selected'); statusEl.className = 'mn-small mn-dep-fail'; }
         return;
     }
 
@@ -538,11 +543,11 @@ function mnNodeSavePrivKey(mode) {
             _doSave(textInput.value);
             return;
         }
-        if (statusEl) { statusEl.textContent = 'No key pasted'; statusEl.className = 'mn-small mn-dep-fail'; }
+        if (statusEl) { statusEl.textContent = _t('No key pasted'); statusEl.className = 'mn-small mn-dep-fail'; }
         return;
     }
 
-    if (statusEl) { statusEl.textContent = 'No key provided'; statusEl.className = 'mn-small mn-dep-fail'; }
+    if (statusEl) { statusEl.textContent = _t('No key provided'); statusEl.className = 'mn-small mn-dep-fail'; }
 }
 
 /**
@@ -554,26 +559,25 @@ function mnNodeGenKey() {
     var nodeId   = window.mnCurrentNodeId;
     var statusEl = document.getElementById('mn-genkey-status');
     if (!nodeId || nodeId === '0' || nodeId === '') {
-        if (statusEl) { statusEl.textContent = 'No node selected'; statusEl.className = 'mn-small mn-dep-fail'; }
+        if (statusEl) { statusEl.textContent = _t('No node selected'); statusEl.className = 'mn-small mn-dep-fail'; }
         return;
     }
 
     var confirmed = window.confirm(
-        '⚠ Warning: Generating a new key pair will replace the current private key.\n\n' +
-        'After generation, ALL peer nodes will need to re-fetch and update their public key files ' +
-        'before the GNB network can reconnect.\n\n' +
-        'Continue?'
+        '⚠ ' + _t('Warning: Generating a new key pair will replace the current private key.') + '\n\n' +
+        _t('All peer nodes will need to re-fetch public keys before reconnecting.') + '\n\n' +
+        _t('Continue?')
     );
     if (!confirmed) return;
 
-    if (statusEl) { statusEl.textContent = 'Generating key pair…'; statusEl.className = 'mn-small mn-muted'; }
+    if (statusEl) { statusEl.textContent = _t('Generating key pair…'); statusEl.className = 'mn-small mn-muted'; }
 
     mnFetch(_mnApiBase() + 'node_gen_key', 'POST',
         { node_id: nodeId },
         function (data) {
             if (data.success) {
                 if (statusEl) {
-                    statusEl.textContent = '✓ New key pair generated and public key uploaded. pub: ' +
+                    statusEl.textContent = '✓ ' + _t('New key pair generated, public key uploaded. pub: ') +
                         (data.pub_hex ? data.pub_hex.substring(0, 16) + '…' : '');
                     statusEl.className = 'mn-small mn-dep-ok';
                 }
@@ -595,11 +599,11 @@ function mnNodeGenKey() {
 function mnInstallSystemDeps(btn) {
     var statusEl = document.getElementById('mn-sysdesp-status');
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
-    if (statusEl) { statusEl.textContent = 'Installing…'; statusEl.className = 'mn-small mn-muted'; }
+    if (statusEl) { statusEl.textContent = _t('Installing…'); statusEl.className = 'mn-small mn-muted'; }
 
     mnFetch(_mnApiBase() + 'install_system_deps', 'POST', {},
         function (data) {
-            if (btn) { btn.disabled = false; btn.textContent = '⚡ Auto-Install'; }
+            if (btn) { btn.disabled = false; btn.textContent = '⚡ ' + _t('Auto-Install'); }
             if (data.success) {
                 var errs = data.errors && data.errors.length;
                 if (statusEl) {
@@ -674,11 +678,11 @@ function _mnFmtUptime(sec) {
  */
 function mnRunPreflight(nodeId, container) {
     if (!container) return;
-    container.innerHTML = '<span class="mn-small">Checking…</span>';
+    container.innerHTML = '<span class="mn-small">' + _t('Checking…') + '</span>';
     mnFetch(_mnApiBase() + 'preflight', 'POST', { node_id: nodeId },
         function (data) {
             if (!data.success || !data.data) {
-                container.innerHTML = '<span class="mn-dep-fail">Check failed</span>';
+                container.innerHTML = '<span class="mn-dep-fail">' + _t('Check failed') + '</span>';
                 return;
             }
             var checks = data.data.checks || [];
@@ -751,7 +755,7 @@ function mnRunDiagnose() {
     var tbody = document.querySelector('#mn-diag-table tbody');
     var logPre = document.getElementById('mn-diag-log');
 
-    if (tbody) tbody.innerHTML = '<tr><td colspan="3">Checking…</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="3">' + _t('Checking…') + '</td></tr>';
     if (resultDiv) resultDiv.classList.remove('mn-hidden');
     if (logSection) logSection.classList.add('mn-hidden');
 

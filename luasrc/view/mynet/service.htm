@@ -66,7 +66,7 @@ end
                 <label style="cursor:pointer">
                     <input type="checkbox" id="mn-chk-autostart" <%=is_enabled and 'checked' or ''%>
                         onchange="mnSvcAutostart(this, 'initd')">
-                    <%=is_enabled and 'Enabled' or 'Disabled'%>
+                    <%=is_enabled and translate('Enabled') or translate('Disabled')%>
                 </label>
             </td>
         </tr>
@@ -233,7 +233,7 @@ end
         <button onclick="mnSvcOp({service:'network',op:'fw_setup',tab:'network'},this)" class="cbi-button cbi-button-apply">&#9889; <%:Setup Firewall Zone%></button>
         <% else %>
         <button onclick="mnSvcOp({service:'network',op:'fw_apply_masq',tab:'network'},this)" class="cbi-button cbi-button-action">&#8635; <%:Re-apply Masq%></button>
-        <button onclick="if(confirm('确认移除 mynet 防火墙区域？VPN 流量转发将停止工作。'))mnSvcOp({service:'network',op:'fw_teardown',tab:'network'},this)" class="cbi-button cbi-button-remove"><%:Remove Firewall Zone%></button>
+        <button onclick="if(confirm('<%:Remove mynet firewall zone? VPN traffic forwarding will stop working.%>'))mnSvcOp({service:'network',op:'fw_teardown',tab:'network'},this)" class="cbi-button cbi-button-remove"><%:Remove Firewall Zone%></button>
         <% end %>
     </div>
 </div>
@@ -334,6 +334,7 @@ local cur_nid_str = nid_fmt(diag_node_id)
 </div>
 
 <div id="mn-toast" class="mn-toast mn-hidden"></div>
+<%+mynet/_i18n_js%>
 <script src="<%=resource%>/mynet/js/mynet.js"></script>
 <script>
 (function(){
@@ -376,7 +377,7 @@ local cur_nid_str = nid_fmt(diag_node_id)
 
     window.mnGNBToggleAuto = function (btn) {
         _enabled = !_enabled;
-        btn.textContent = _enabled ? 'Auto ON (60s)' : '<%:Auto (60s)%>';
+        btn.textContent = _enabled ? _t('Auto ON') + ' (60s)' : '<%:Auto (60s)%>';
         if (_enabled) {
             _countdown = 60;
             _startCountdown();
@@ -391,7 +392,7 @@ local cur_nid_str = nid_fmt(diag_node_id)
         _autoTimer = setInterval(function () {
             _countdown--;
             var el = document.getElementById('gnb-next-refresh');
-            if (el) el.textContent = 'next refresh in ' + _countdown + 's';
+            if (el) el.textContent = _t('next refresh in ') + _countdown + 's';
             if (_countdown <= 0) {
                 clearInterval(_autoTimer);
                 _doRefresh();
@@ -468,7 +469,7 @@ local cur_nid_str = nid_fmt(diag_node_id)
 
     window.mnLogToggleAuto = function(btn) {
         _enabled = !_enabled;
-        btn.textContent = _enabled ? 'Auto ON (30s)' : '<%:Auto (30s)%>';
+        btn.textContent = _enabled ? _t('Auto ON') + ' (30s)' : '<%:Auto (30s)%>';
         if (_enabled) {
             _countdown = 30;
             _startCountdown();

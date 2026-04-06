@@ -1654,3 +1654,211 @@ msgstr "将本地节点切换为此节点？服务需要重启。"
 #: view/mynet/guest.htm
 msgid "Use This Config"
 msgstr "使用此配置"
+
+#: view/mynet/_i18n_js.htm
+msgid "Request in progress, please wait"
+msgstr "请求进行中，请稍候"
+
+#: view/mynet/_i18n_js.htm
+msgid "Operation failed"
+msgstr "操作失败"
+
+#: view/mynet/_i18n_js.htm
+msgid "Network error"
+msgstr "网络错误"
+
+#: view/mynet/_i18n_js.htm
+msgid "Triggering GNB auto-install…"
+msgstr "正在触发 GNB 自动安装…"
+
+#: view/mynet/_i18n_js.htm
+msgid "gnb_ctl installed"
+msgstr "gnb_ctl 已安装"
+
+#: view/mynet/_i18n_js.htm
+msgid "Auto-install failed"
+msgstr "自动安装失败"
+
+#: view/mynet/_i18n_js.htm
+msgid "Installing GNB"
+msgstr "正在安装 GNB"
+
+#: view/mynet/_i18n_js.htm
+msgid "Request failed"
+msgstr "请求失败"
+
+#: view/mynet/_i18n_js.htm
+msgid "GNB install complete"
+msgstr "GNB 安装完成"
+
+#: view/mynet/_i18n_js.htm
+msgid "Install failed, check log"
+msgstr "安装失败，查看日志"
+
+#: view/mynet/_i18n_js.htm
+msgid "Install script finished, refresh to check"
+msgstr "安装脚本已完成，刷新页面检查"
+
+#: view/mynet/_i18n_js.htm
+msgid "Refreshing…"
+msgstr "刷新中…"
+
+#: view/mynet/_i18n_js.htm
+msgid "All configs refreshed"
+msgstr "全部配置已刷新"
+
+#: view/mynet/_i18n_js.htm
+msgid "files"
+msgstr "个文件"
+
+#: view/mynet/_i18n_js.htm
+msgid "Switch to node:"
+msgstr "切换到节点："
+
+#: view/mynet/_i18n_js.htm
+msgid "This will save the new node configuration. Continue?"
+msgstr "这将保存新的节点配置，是否继续？"
+
+#: view/mynet/_i18n_js.htm
+msgid "Switching…"
+msgstr "切换中…"
+
+#: view/mynet/_i18n_js.htm
+msgid "Key is empty"
+msgstr "密钥为空"
+
+#: view/mynet/_i18n_js.htm
+msgid "Must be 128 hex chars"
+msgstr "必须为 128 位十六进制字符"
+
+#: view/mynet/_i18n_js.htm
+msgid "Saving…"
+msgstr "保存中…"
+
+#: view/mynet/_i18n_js.htm
+msgid "Saved"
+msgstr "已保存"
+
+#: view/mynet/_i18n_js.htm
+msgid "No file selected"
+msgstr "未选择文件"
+
+#: view/mynet/_i18n_js.htm
+msgid "No key pasted"
+msgstr "未粘贴密钥"
+
+#: view/mynet/_i18n_js.htm
+msgid "No key provided"
+msgstr "未提供密钥"
+
+#: view/mynet/_i18n_js.htm
+msgid "No node selected"
+msgstr "未选择节点"
+
+#: view/mynet/_i18n_js.htm
+msgid "Warning: Generating a new key pair will replace the current private key."
+msgstr "警告：生成新密钥对将替换当前私钥。"
+
+#: view/mynet/_i18n_js.htm
+msgid "All peer nodes will need to re-fetch public keys before reconnecting."
+msgstr "所有对端节点需要重新获取公钥才能重新连接。"
+
+#: view/mynet/_i18n_js.htm
+msgid "Continue?"
+msgstr "是否继续？"
+
+#: view/mynet/_i18n_js.htm
+msgid "Generating key pair…"
+msgstr "正在生成密钥对…"
+
+#: view/mynet/_i18n_js.htm
+msgid "New key pair generated, public key uploaded."
+msgstr "新密钥对已生成，公钥已上传。"
+
+#: view/mynet/_i18n_js.htm
+msgid "Installing…"
+msgstr "安装中…"
+
+#: view/mynet/_i18n_js.htm
+msgid "Checking…"
+msgstr "检测中…"
+
+#: view/mynet/_i18n_js.htm
+msgid "Check failed"
+msgstr "检查失败"
+
+#: view/mynet/_i18n_js.htm
+msgid "updated"
+msgstr "已更新"
+
+#: view/mynet/_i18n_js.htm
+msgid "Configuring…"
+msgstr "配置中…"
+
+#: view/mynet/_i18n_js.htm
+msgid "next refresh in"
+msgstr "下次刷新倒计时"
+
+#: view/mynet/_i18n_js.htm
+msgid "Auto ON"
+msgstr "自动刷新已开启"
+
+#: view/mynet/node.htm
+msgid "Unsupported format. Please select .tar.gz / .tgz / .gz / .zip"
+msgstr "不支持的格式，请选择 .tar.gz / .tgz / .gz / .zip"
+
+#: view/mynet/node.htm
+msgid "Parsing config package…"
+msgstr "正在解析配置包…"
+
+#: view/mynet/node.htm
+msgid "Parse failed"
+msgstr "解析失败"
+
+#: view/mynet/node.htm
+msgid "Current node is"
+msgstr "当前节点为"
+
+#: view/mynet/node.htm
+msgid "will switch to"
+msgstr "导入后将切换到"
+
+#: view/mynet/node.htm
+msgid "Confirm import?"
+msgstr "确认导入？"
+
+#: view/mynet/node.htm
+msgid "Cancelled"
+msgstr "已取消"
+
+#: view/mynet/node.htm
+msgid "Importing…"
+msgstr "正在导入…"
+
+#: view/mynet/node.htm
+msgid "Config package imported, node"
+msgstr "配置包已导入，节点"
+
+#: view/mynet/node.htm
+msgid "node.conf must contain a nodeid line (e.g. nodeid 1001)"
+msgstr "node.conf 必须包含 nodeid 行（例: nodeid 1001）"
+
+#: view/mynet/node.htm
+msgid "route.conf first record node ID"
+msgstr "route.conf 第一条记录的节点 ID"
+
+#: view/mynet/node.htm
+msgid "does not match current node"
+msgstr "与当前节点不一致"
+
+#: view/mynet/node.htm
+msgid "Save anyway?"
+msgstr "仍然保存？"
+
+#: view/mynet/service.htm
+msgid "Remove mynet firewall zone? VPN traffic forwarding will stop working."
+msgstr "确认移除 mynet 防火墙区域？VPN 流量转发将停止工作。"
+
+#: view/mynet/node.htm
+msgid "node.conf saved, current node set to"
+msgstr "node.conf 已保存，当前节点已设为"

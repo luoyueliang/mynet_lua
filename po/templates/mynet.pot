@@ -1216,3 +1216,211 @@ msgstr ""
 #: view/mynet/guest.htm
 msgid "Use This Config"
 msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Request in progress, please wait"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Operation failed"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Network error"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Triggering GNB auto-install…"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "gnb_ctl installed"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Auto-install failed"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Installing GNB"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Request failed"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "GNB install complete"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Install failed, check log"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Install script finished, refresh to check"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Refreshing…"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "All configs refreshed"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "files"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Switch to node:"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "This will save the new node configuration. Continue?"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Switching…"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Key is empty"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Must be 128 hex chars"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Saving…"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Saved"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "No file selected"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "No key pasted"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "No key provided"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "No node selected"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Warning: Generating a new key pair will replace the current private key."
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "All peer nodes will need to re-fetch public keys before reconnecting."
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Continue?"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Generating key pair…"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "New key pair generated, public key uploaded."
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Installing…"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Checking…"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Check failed"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "updated"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Configuring…"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "next refresh in"
+msgstr ""
+
+#: view/mynet/_i18n_js.htm
+msgid "Auto ON"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Unsupported format. Please select .tar.gz / .tgz / .gz / .zip"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Parsing config package…"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Parse failed"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Current node is"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "will switch to"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Confirm import?"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Cancelled"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Importing…"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Config package imported, node"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "node.conf must contain a nodeid line (e.g. nodeid 1001)"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "route.conf first record node ID"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "does not match current node"
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "Save anyway?"
+msgstr ""
+
+#: view/mynet/service.htm
+msgid "Remove mynet firewall zone? VPN traffic forwarding will stop working."
+msgstr ""
+
+#: view/mynet/node.htm
+msgid "node.conf saved, current node set to"
+msgstr ""
