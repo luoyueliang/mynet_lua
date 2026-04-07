@@ -126,37 +126,37 @@ jobs:
           CTRL_DIR="${STAGING}/control"
           mkdir -p "${CTRL_DIR}"
 
-          cat > "${CTRL_DIR}/control" <<CTRL
-Package: ${PKG_NAME}
-Version: ${VERSION}-1
-Depends: luci-base, curl, luci-lib-jsonc, bash, kmod-tun
-Section: luci
-Architecture: all
-Installed-Size: $(du -sk "${DATA_ROOT}" | cut -f1)
-Description: MyNet VPN management interface for OpenWrt LuCI
-CTRL
+          {
+            echo "Package: ${PKG_NAME}"
+            echo "Version: ${VERSION}-1"
+            echo "Depends: luci-base, curl, luci-lib-jsonc, bash, kmod-tun"
+            echo "Section: luci"
+            echo "Architecture: all"
+            echo "Installed-Size: $(du -sk "${DATA_ROOT}" | cut -f1)"
+            echo "Description: MyNet VPN management interface for OpenWrt LuCI"
+          } > "${CTRL_DIR}/control"
 
           printf '/etc/mynet/conf/config.json\n' > "${CTRL_DIR}/conffiles"
 
-          cat > "${CTRL_DIR}/postinst" <<'POSTINST'
-#!/bin/sh
-[ -n "${IPKG_INSTROOT}" ] && exit 0
-rm -rf /etc/mynet/scripts/_src
-modprobe tun 2>/dev/null
-MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/firewall.mynet install 2>/dev/null
-rm -rf /tmp/luci-*
-/etc/init.d/mynet enable 2>/dev/null
-exit 0
-POSTINST
+          {
+            echo '#!/bin/sh'
+            echo '[ -n "${IPKG_INSTROOT}" ] && exit 0'
+            echo 'rm -rf /etc/mynet/scripts/_src'
+            echo 'modprobe tun 2>/dev/null'
+            echo 'MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/firewall.mynet install 2>/dev/null'
+            echo 'rm -rf /tmp/luci-*'
+            echo '/etc/init.d/mynet enable 2>/dev/null'
+            echo 'exit 0'
+          } > "${CTRL_DIR}/postinst"
           chmod 755 "${CTRL_DIR}/postinst"
 
-          cat > "${CTRL_DIR}/prerm" <<'PRERM'
-#!/bin/sh
-[ -n "${IPKG_INSTROOT}" ] && exit 0
-/etc/init.d/mynet stop 2>/dev/null
-/etc/init.d/mynet disable 2>/dev/null
-exit 0
-PRERM
+          {
+            echo '#!/bin/sh'
+            echo '[ -n "${IPKG_INSTROOT}" ] && exit 0'
+            echo '/etc/init.d/mynet stop 2>/dev/null'
+            echo '/etc/init.d/mynet disable 2>/dev/null'
+            echo 'exit 0'
+          } > "${CTRL_DIR}/prerm"
           chmod 755 "${CTRL_DIR}/prerm"
 
           echo "==> Creating control.tar.gz..."
