@@ -754,8 +754,8 @@ start_dns_intercept() {
                     nft add table inet mynet_proxy 2>/dev/null || true
                     nft delete chain inet mynet_proxy dns_intercept 2>/dev/null || true
                     nft add chain inet mynet_proxy dns_intercept { type nat hook prerouting priority dstnat\; }
-                    nft add rule inet mynet_proxy dns_intercept iifname "br-lan" udp dport 53 dnat to "$dns_server:53"
-                    nft add rule inet mynet_proxy dns_intercept iifname "br-lan" tcp dport 53 dnat to "$dns_server:53"
+                    nft add rule inet mynet_proxy dns_intercept iifname "br-lan" udp dport 53 dnat ip to "$dns_server:53"
+                    nft add rule inet mynet_proxy dns_intercept iifname "br-lan" tcp dport 53 dnat ip to "$dns_server:53"
                     ;;
                 iptables)
                     iptables -w 5 -t nat -C PREROUTING -i br-lan -p udp --dport 53 -j DNAT --to-destination "$dns_server:53" 2>/dev/null || \
