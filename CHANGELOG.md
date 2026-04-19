@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.1.1 (2026-04-20)
+
+### Chore
+- **清理未使用脚本** — 删除 Makefile 未引用的 5 个冗余脚本文件（共 4664 行）：
+  - `scripts/install/install.sh`（已被 ipk/Makefile 替代）
+  - `scripts/_src/common/{common,route,vpn}.sh`（未使用的跨平台库）
+  - `scripts/_src/openwrt/service-manager.sh`（手动运维脚本）
+
 ## v2.1.0 (2026-04-19)
 
 ### Features
