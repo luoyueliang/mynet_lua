@@ -79,7 +79,7 @@ end
 
 -- ─────────────────────────────────────────────────────────────
 -- 获取渲染后的节点配置文本（text/plain）
--- 对应 Go: GET /nodes/{id}/config?render_conf=1
+-- GET /nodes/{id}/config?render_conf=1
 -- 直接返回可写入 node.conf 的文本
 -- ─────────────────────────────────────────────────────────────
 function M.get_node_config_rendered(node_id)
@@ -159,6 +159,75 @@ local function guest_address_text()
     return string.format("i|0|%s|%s", host, port)
 end
 
+local function normalize_config_content(content)
+    content = content or ""
+    if content == "" or content:sub(-1) == "\n" then
+        return content
+    end
+    return content .. "\n"
+end
+
+local function resolve_local_config_path(node_id, config_type)
+    local self_nid = nid(node_id)
+    if config_type == "node" then
+        return string.format("%s/%s/node.conf", cfg.get_gnb_conf_root(), self_nid)
+    end
+    if config_type == "route" then
+        return string.format("%s/%s/route.conf", util.GNB_CONF_DIR, self_nid)
+    end
+    if config_type == "address" then
+        return string.format("%s/%s/address.conf", util.GNB_CONF_DIR, self_nid)
+    end
+    return nil, "unknown config type: " .. tostring(config_type)
+end
+
+local function apply_local_config_side_effects(node_id, config_type)
+    if config_type == "node" then
+        local ok, err = cfg.generate_mynet_conf(tonumber(node_id))
+        if not ok then
+            return false, "generate mynet.conf: " .. (err or "unknown")
+        end
+        return true, nil
+    end
+
+    if config_type == "route" then
+        local _, network_err = M.generate_network_conf(node_id)
+        if network_err then
+            return false, network_err
+        end
+
+        local proxy_m = require("luci.model.mynet.proxy")
+        local pcfg = proxy_m.load_config()
+        if pcfg.proxy_enabled then
+            local _, inject_err = proxy_m.route_inject()
+            if inject_err and inject_err ~= "no proxy peers configured" then
+                util.log_warn("route.conf post-write hook: " .. inject_err)
+            end
+        end
+    end
+
+    return true, nil
+end
+
+function M.write_local_config(node_id, config_type, content)
+    local target_path, path_err = resolve_local_config_path(node_id, config_type)
+    if not target_path then
+        return false, path_err, nil
+    end
+
+    local ok, write_err = util.write_file(target_path, normalize_config_content(content))
+    if not ok then
+        return false, write_err or "write failed", target_path
+    end
+
+    local hook_ok, hook_err = apply_local_config_side_effects(node_id, config_type)
+    if not hook_ok then
+        return false, hook_err or "post-write hook failed", target_path
+    end
+
+    return true, nil, target_path
+end
+
 -- ─────────────────────────────────────────────────────────────
 -- 刷新配置：下载并写入 node.conf、route.conf、address.conf
 -- 对应 Go: cmd/refresh_config.go 的核心流程
@@ -170,14 +239,12 @@ function M.refresh_configs(node_id)
     local vpn_type = cfg.get_vpn_type()
 
     -- 1. node.conf
-    local node_conf_path = string.format("%s/%s/node.conf",
-        cfg.get_gnb_conf_root(), nid(node_id))
     local node_text, err1 = M.get_node_config_rendered(node_id)
     if err1 then
         results.ok = false
         results.errors[#results.errors+1] = "node.conf: " .. err1
     elseif node_text and node_text ~= "" then
-        local ok, we = util.write_file(node_conf_path, node_text .. "\n")
+        local ok, we, node_conf_path = M.write_local_config(node_id, "node", node_text)
         if ok then
             results.files[#results.files+1] = node_conf_path
         else
@@ -187,22 +254,14 @@ function M.refresh_configs(node_id)
     end
 
     -- 2. route.conf
-    local route_path = string.format("%s/%s/route.conf", util.GNB_CONF_DIR, nid(node_id))
     local route_text, err2 = M.get_route_config_rendered(node_id)
     if err2 then
         results.ok = false
         results.errors[#results.errors+1] = "route.conf: " .. err2
     elseif route_text and route_text ~= "" then
-        local ok, we = util.write_file(route_path, route_text .. "\n")
+        local ok, we, route_path = M.write_local_config(node_id, "route", route_text)
         if ok then
             results.files[#results.files+1] = route_path
-            M.generate_network_conf(node_id)
-            -- proxy route re-inject（route.conf 被全量覆写后需重新注入）
-            local proxy_m = require("luci.model.mynet.proxy")
-            local pcfg = proxy_m.load_config()
-            if pcfg.proxy_enabled then
-                proxy_m.route_inject()
-            end
         else
             results.ok = false
             results.errors[#results.errors+1] = "write route.conf: " .. (we or "")
@@ -210,7 +269,6 @@ function M.refresh_configs(node_id)
     end
 
     -- 3. address.conf（guest 模式用本地 index_addr，否则从 API 拉取）
-    local addr_path = string.format("%s/%s/address.conf", util.GNB_CONF_DIR, nid(node_id))
     local svc_text = guest_address_text()
     if not svc_text then
         local err3
@@ -221,7 +279,7 @@ function M.refresh_configs(node_id)
         end
     end
     if svc_text and svc_text ~= "" then
-        local ok, we = util.write_file(addr_path, svc_text .. "\n")
+        local ok, we, addr_path = M.write_local_config(node_id, "address", svc_text)
         if ok then
             results.files[#results.files+1] = addr_path
         else
@@ -263,36 +321,35 @@ function M.refresh_configs_bundle(node_id)
         return r
     end
 
-    local results = { ok = true, files = {}, errors = {}, method = "bundle" }
+    local results = { ok = true, files = {}, errors = {}, warnings = {}, method = "bundle" }
     local gnb_conf_root = cfg.get_gnb_conf_root()
+
+    -- 处理 warnings（back v2.2.0: 对等节点公钥获取失败等）
+    local bw = bundle.warnings or (bundle.data and bundle.data.warnings) or {}
+    for _, w in ipairs(bw) do
+        local msg = w.message or (w.type and ("type=" .. w.type) or "unknown warning")
+        results.warnings[#results.warnings + 1] = msg
+        util.log_warn("config-bundle warning: " .. msg)
+    end
 
     -- 写入配置文件
     local files = bundle.files or (bundle.data and bundle.data.files) or {}
     local file_map = {
-        ["node.conf"]    = string.format("%s/%s/node.conf", gnb_conf_root, self_nid),
-        ["route.conf"]   = string.format("%s/%s/route.conf", util.GNB_CONF_DIR, self_nid),
-        ["address.conf"] = string.format("%s/%s/address.conf", util.GNB_CONF_DIR, self_nid),
+        ["node.conf"]    = "node",
+        ["route.conf"]   = "route",
+        ["address.conf"] = "address",
     }
     -- Guest 模式：address.conf 用本地 index_addr，不用 API 返回的空内容
     local guest_addr = guest_address_text()
     if guest_addr then
         files["address.conf"] = guest_addr
     end
-    for fname, dest in pairs(file_map) do
+    for fname, config_type in pairs(file_map) do
         local content = files[fname]
         if content and content ~= "" then
-            local ok, we = util.write_file(dest, content .. "\n")
+            local ok, we, dest = M.write_local_config(node_id, config_type, content)
             if ok then
                 results.files[#results.files + 1] = dest
-                if fname == "route.conf" then
-                    M.generate_network_conf(node_id)
-                    -- proxy route re-inject
-                    local proxy_m = require("luci.model.mynet.proxy")
-                    local pcfg = proxy_m.load_config()
-                    if pcfg.proxy_enabled then
-                        proxy_m.route_inject()
-                    end
-                end
             else
                 results.ok = false
                 results.errors[#results.errors + 1] = "write " .. fname .. ": " .. (we or "")
@@ -668,18 +725,21 @@ end
 -- ─────────────────────────────────────────────────────────────
 function M.refresh_single_config(node_id, config_type)
     if config_type == "node" then
-        local node_conf_path = string.format("%s/%s/node.conf",
-            cfg.get_gnb_conf_root(), nid(node_id))
         local text, err = M.get_node_config_rendered(node_id)
-        if err then return { ok = false, file = node_conf_path, error = err } end
-        local ok, we = util.write_file(node_conf_path, (text or "") .. "\n")
+        if err then
+            local node_conf_path = resolve_local_config_path(node_id, "node")
+            return { ok = false, file = node_conf_path, error = err }
+        end
+        local ok, we, node_conf_path = M.write_local_config(node_id, "node", text)
         return { ok = ok, file = node_conf_path, error = we }
 
     elseif config_type == "route" then
-        local route_path = string.format("%s/%s/route.conf", util.GNB_CONF_DIR, nid(node_id))
         local text, err  = M.get_route_config_rendered(node_id)
-        if err then return { ok = false, file = route_path, error = err } end
-        local ok, we = util.write_file(route_path, (text or "") .. "\n")
+        if err then
+            local route_path = resolve_local_config_path(node_id, "route")
+            return { ok = false, file = route_path, error = err }
+        end
+        local ok, we, route_path = M.write_local_config(node_id, "route", text)
         if ok then
             -- route 更新后批量同步对端公钥
             local pk_result = M.refresh_peer_keys_batch(node_id)
@@ -688,14 +748,16 @@ function M.refresh_single_config(node_id, config_type)
         return { ok = ok, file = route_path, error = we }
 
     elseif config_type == "address" then
-        local addr_path  = string.format("%s/%s/address.conf", util.GNB_CONF_DIR, nid(node_id))
         local text = guest_address_text()
         if not text then
             local err
             text, err = M.get_services_index()
-            if err then return { ok = false, file = addr_path, error = err } end
+            if err then
+                local addr_path = resolve_local_config_path(node_id, "address")
+                return { ok = false, file = addr_path, error = err }
+            end
         end
-        local ok, we = util.write_file(addr_path, (text or "") .. "\n")
+        local ok, we, addr_path = M.write_local_config(node_id, "address", text)
         return { ok = ok, file = addr_path, error = we }
 
     else
@@ -1469,7 +1531,7 @@ function M.import_apply(tmp_dir, node_id)
     if not tmp_dir or not util.file_exists(tmp_dir) then
         return false, "temp dir not found (expired?)"
     end
-    local nid_s    = tostring(node_id)
+    local nid_s    = util.int_str(node_id)
     local conf_dir = util.GNB_CONF_DIR .. "/" .. nid_s
 
     os.execute("mkdir -p '" .. conf_dir .. "/security'")

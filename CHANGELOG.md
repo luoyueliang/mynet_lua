@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.1.0 (2026-04-19)
+
+### Features
+- **心跳 v2 协议** — `submit_heartbeat()` 和 `run_daemon_heartbeat()` 升级到 `POST /api/v2/monitor/heartbeat`，使用 HMAC-SHA256 Node-Sig 认证（移除旧 PATCH + Bearer 模式）
+- **心跳命令响应** — 处理服务端下发的 `commands` 数组：`config.refresh` / `service.restart` / `gnb.restart` / `gnb.start` / `gnb.stop` / `route.refresh` 自动执行
+- **config-bundle warnings** — 解析 back v2.2.0 新增的 `warnings` 字段（如缺失对等节点公钥），日志记录并返回前端
+- **心跳 body v2 格式** — `vpn_interface` (单数) → `vpn_interfaces` (数组)，新增 `status`/`uptime` 字段
+
+### API Changes
+- `api.lua`: 新增 `post_heartbeat()` 方法（Node-Sig 认证，X-Node-Id/X-Timestamp/X-Node-Signature 请求头）
+- `system.lua`: `submit_heartbeat()` 不再依赖 Bearer Token，改用公钥 HMAC 签名
+- Heartbeat HMAC 签名路径从 `/api/v1/` 更新为 `/api/v2/monitor/heartbeat`
+- 对齐 `api-versions.json`: min_back_api 2.2.0
+
 ## v2.0.2 (2026-04-19)
 
 ### Improvements

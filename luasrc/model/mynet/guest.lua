@@ -97,7 +97,7 @@ end
 
 -- 写入单个节点的全部配置（目录 + node/route/address/keys）
 local function write_node_configs(node, all_nodes, local_node, port, all_keys, index_addr)
-    local nid_s    = tostring(node.node_id)
+    local nid_s    = util.int_str(node.node_id)
     local conf_dir = GNB_CONF_DIR .. "/" .. nid_s
 
     util.ensure_dir(conf_dir)
@@ -136,7 +136,7 @@ function M.ensure_route_conf(node_id)
     if not g or not g.nodes then
         return nil, "guest.json 未初始化"
     end
-    local nid_s = tostring(node_id)
+    local nid_s = util.int_str(node_id)
     local content = gen_route_conf(node_id, g.nodes)
     if not content or content == "" then
         return nil, "无法生成 route.conf（仅一个节点？）"
@@ -279,8 +279,8 @@ function M.add_node(name, custom_node_id)
     local all_keys = {}
     all_keys[new_id] = kp
     for _, n in ipairs(g.nodes) do
-        local pub_path = GNB_CONF_DIR .. "/" .. tostring(n.node_id)
-            .. "/security/" .. tostring(n.node_id) .. ".public"
+        local pub_path = GNB_CONF_DIR .. "/" .. util.int_str(n.node_id)
+            .. "/security/" .. util.int_str(n.node_id) .. ".public"
         local pub = util.trim(util.read_file(pub_path) or "")
         if pub ~= "" then
             all_keys[n.node_id] = { pub_hex = pub }
@@ -293,7 +293,7 @@ function M.add_node(name, custom_node_id)
     all_nodes[#all_nodes + 1] = new_node
 
     -- 写入新节点完整配置
-    local nid_s    = tostring(new_id)
+    local nid_s    = util.int_str(new_id)
     local conf_dir = GNB_CONF_DIR .. "/" .. nid_s
     util.ensure_dir(conf_dir)
     util.ensure_dir(conf_dir .. "/security")
@@ -312,20 +312,20 @@ function M.add_node(name, custom_node_id)
     -- 公钥：写入所有节点的公钥
     for nid, k in pairs(all_keys) do
         util.write_file(
-            conf_dir .. "/ed25519/" .. tostring(nid) .. ".public", k.pub_hex)
+            conf_dir .. "/ed25519/" .. util.int_str(nid) .. ".public", k.pub_hex)
     end
 
     -- 更新现有节点：追加新节点公钥 + route
     for _, existing in ipairs(g.nodes) do
-        local edir = GNB_CONF_DIR .. "/" .. tostring(existing.node_id)
+        local edir = GNB_CONF_DIR .. "/" .. util.int_str(existing.node_id)
         -- 公钥
         util.write_file(edir .. "/ed25519/" .. nid_s .. ".public", kp.pub_hex)
         -- route.conf：追加一行
         local rpath = edir .. "/route.conf"
         local rcontent = util.read_file(rpath) or ""
         local new_line = string.format(
-            "%d|%s|255.255.255.255", new_id, new_node.virtual_ip)
-        if not rcontent:find(tostring(new_id) .. "|") then
+            "%s|%s|255.255.255.255", util.int_str(new_id), new_node.virtual_ip)
+        if not rcontent:find(util.int_str(new_id) .. "|") then
             util.write_file(rpath, rcontent .. new_line .. "\n")
         end
     end
@@ -354,7 +354,7 @@ function M.delete_node(node_id)
         return nil, "至少保留 2 个节点"
     end
 
-    local nid_s = tostring(node_id)
+    local nid_s = util.int_str(node_id)
     local found = false
     local remaining = {}
     for _, n in ipairs(g.nodes) do
@@ -371,7 +371,7 @@ function M.delete_node(node_id)
 
     -- 从其他节点移除公钥 + 路由
     for _, n in ipairs(remaining) do
-        local edir = GNB_CONF_DIR .. "/" .. tostring(n.node_id)
+        local edir = GNB_CONF_DIR .. "/" .. util.int_str(n.node_id)
         os.execute("rm -f '" .. edir .. "/ed25519/" .. nid_s .. ".public'")
         -- 重写 route.conf（排除已删节点）
         util.write_file(edir .. "/route.conf",
@@ -389,7 +389,7 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function M.export_node_config(node_id)
-    local nid_s    = tostring(node_id)
+    local nid_s    = util.int_str(node_id)
     local conf_dir = GNB_CONF_DIR .. "/" .. nid_s
 
     if not util.file_exists(conf_dir .. "/node.conf") then
@@ -416,7 +416,7 @@ function M.reset()
     local g = M.load_config()
     if g and g.nodes then
         for _, n in ipairs(g.nodes) do
-            os.execute("rm -rf '" .. GNB_CONF_DIR .. "/" .. tostring(n.node_id) .. "'")
+            os.execute("rm -rf '" .. GNB_CONF_DIR .. "/" .. util.int_str(n.node_id) .. "'")
         end
     end
     os.execute("rm -f '" .. GUEST_FILE .. "'")
@@ -569,7 +569,7 @@ function M.import_apply(tmp_dir, node_id)
         return false, "temp dir not found (expired?)"
     end
 
-    local nid_s    = tostring(node_id)
+    local nid_s    = util.int_str(node_id)
     local conf_dir = GNB_CONF_DIR .. "/" .. nid_s
 
     -- 创建目标目录

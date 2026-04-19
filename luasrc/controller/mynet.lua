@@ -1329,7 +1329,8 @@ function api_node_refresh_config()
     if config_type == "all" then
         -- 优先 bundle API，自动 fallback
         local results = node_m.refresh_configs_bundle(node_id)
-        json_ok({ success = results.ok, files = results.files, errors = results.errors, method = results.method })
+        json_ok({ success = results.ok, files = results.files, errors = results.errors,
+                  warnings = results.warnings, method = results.method })
     else
         local res = node_m.refresh_single_config(node_id, config_type)
         json_ok({ success = res.ok, file = res.file, error = res.error })
@@ -1442,16 +1443,12 @@ function api_node_save_config()
         end
 
         if not has_node then
-            -- 首次设置：创建目录并写入 node.conf，然后设为当前节点
+            -- 首次设置：写入 node.conf，并自动同步 mynet.conf / UCI 接口
             local nid_str = util.int_str(extracted_num)
-            local conf_dir = util.GNB_CONF_DIR .. "/" .. nid_str
-            util.exec("mkdir -p " .. conf_dir)
-            local target = conf_dir .. "/node.conf"
-            local ok, werr = util.write_file(target, content)
+            local ok, werr, target = node_m.write_local_config(extracted_num, "node", content)
             if not ok then
                 json_err("write failed: " .. (werr or "unknown")); return
             end
-            cfg_m.generate_mynet_conf(extracted_num)
             json_ok({ success = true, message = "node.conf saved, node set to #" .. nid_str,
                        path = target, node_id_set = nid_str })
             return
@@ -1463,13 +1460,7 @@ function api_node_save_config()
             if cur_nid_str ~= ext_nid_str then
                 warning = "node.conf nodeid (" .. ext_nid_str .. ") does not match current node (" .. cur_nid_str .. ")"
             end
-            -- 仍然保存到当前节点目录
-            local cfgs = node_m.read_local_configs(node_id)
-            local target = cfgs.node_conf_path
-            if not target then
-                json_err("cannot resolve node.conf path"); return
-            end
-            local ok, werr = util.write_file(target, content)
+            local ok, werr, target = node_m.write_local_config(node_id, "node", content)
             if not ok then
                 json_err("write failed: " .. (werr or "unknown")); return
             end
@@ -1483,16 +1474,6 @@ function api_node_save_config()
     -- address.conf / route.conf 需要已有节点
     if not has_node then
         json_err("no node configured – save node.conf first"); return
-    end
-
-    local cfgs = node_m.read_local_configs(node_id)
-    local path_map = {
-        address = cfgs.addr_path,
-        route   = cfgs.route_path,
-    }
-    local target_path = path_map[config_type]
-    if not target_path then
-        json_err("cannot resolve config path"); return
     end
 
     -- route.conf 验证：第一条记录的 nodeid 应与当前节点一致
@@ -1514,7 +1495,7 @@ function api_node_save_config()
         end
     end
 
-    local ok, werr = util.write_file(target_path, content)
+    local ok, werr, target_path = node_m.write_local_config(node_id, config_type, content)
     if not ok then
         json_err("write failed: " .. (werr or "unknown")); return
     end
@@ -1689,9 +1670,10 @@ function api_heartbeat()
     if not require_api_auth() then return end
     local node_id = parse_node_id(true) or cfg_m.get_node_id()
     if not node_id then json_err("node_id required"); return end
-    local ok, err = sys_m.submit_heartbeat(node_id)
-    if ok then
-        json_ok({ success = true, message = "heartbeat sent" })
+    local data, err = sys_m.submit_heartbeat(node_id)
+    if data then
+        json_ok({ success = true, message = "heartbeat sent",
+                  commands = data.commands, node_status = data.node_status })
     else
         json_ok({ success = false, message = err or "heartbeat failed" })
     end
@@ -2330,7 +2312,7 @@ function api_guest_export()
     local fpath, err = guest_m.export_node_config(nid)
     if err then json_err(err); return end
 
-    local fname = "gnb_node_" .. tostring(nid) .. ".tar.gz"
+    local fname = "gnb_node_" .. util.int_str(nid) .. ".tar.gz"
     http.header("Content-Disposition", 'attachment; filename="' .. fname .. '"')
     http.prepare_content("application/gzip")
 
@@ -2379,7 +2361,7 @@ function api_guest_use()
     -- 重新生成 route.conf
     guest_m.ensure_route_conf(node_id)
 
-    json_ok({ success = true, message = "已切换到节点 " .. tostring(node_id) })
+    json_ok({ success = true, message = "已切换到节点 " .. util.int_str(node_id) })
 end
 
 function api_guest_start()

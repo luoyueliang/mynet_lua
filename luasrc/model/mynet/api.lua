@@ -26,7 +26,7 @@ local function do_curl(method, url, json_body, extra_headers, accept_type, timeo
 
     -- 请求头
     local headers = {
-        ["User-Agent"] = "mynet-luci/2.0.0",
+        ["User-Agent"] = "mynet-luci/2.1.0",
         ["Accept"]     = accept_type or "application/json",
     }
     for k, v in pairs(extra_headers or {}) do
@@ -188,6 +188,31 @@ function M.get_router_keys(base_url, node_id_str, token, zone_id)
     local data = util.json_decode(resp)
     if not data then
         return nil, "invalid JSON in router-keys response"
+    end
+    return data, nil
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Heartbeat — POST /api/v2/monitor/heartbeat（Node-Sig 认证）
+-- 使用 X-Node-Id + X-Timestamp + X-Node-Signature 请求头
+-- 返回: (response_table, nil) 或 (nil, error_string)
+-- ─────────────────────────────────────────────────────────────
+function M.post_heartbeat(base_url, node_id_str, timestamp, body_json, signature)
+    local url = versioned_base(base_url, "v2") .. "/monitor/heartbeat"
+    local headers = {
+        ["X-Node-Id"]        = node_id_str,
+        ["X-Timestamp"]      = tostring(timestamp),
+        ["X-Node-Signature"] = signature,
+    }
+    local resp, status, err = do_curl("POST", url, body_json, headers)
+    if err then return nil, err end
+    if status == 0 then return nil, "connection failed" end
+    if status >= 400 then
+        return nil, string.format("api error %d: %s", status, (resp or ""):sub(1, 200))
+    end
+    local data = util.json_decode(resp)
+    if not data then
+        return nil, "invalid JSON in heartbeat response"
     end
     return data, nil
 end

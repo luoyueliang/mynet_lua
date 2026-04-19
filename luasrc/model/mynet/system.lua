@@ -72,10 +72,10 @@ end
 
 -- 检查 gnb 主进程是否在运行（通过 pid 文件或 pgrep）
 local function check_gnb_process(node_id)
-    if not node_id or tostring(node_id) == "0" then
+    if not node_id or util.int_str(node_id) == "0" then
         return false, "no node_id configured"
     end
-    local pid_file = util.GNB_DRIVER_ROOT .. "/conf/" .. tostring(node_id) .. "/gnb.pid"
+    local pid_file = util.GNB_DRIVER_ROOT .. "/conf/" .. util.int_str(node_id) .. "/gnb.pid"
     local pid_str = util.trim(util.read_file(pid_file) or "")
     if pid_str ~= "" then
         local _, code = util.exec_status("kill -0 " .. pid_str .. " 2>/dev/null")
@@ -815,7 +815,7 @@ function M.run_health_check(node_id, vpn_status, fw_info, deps)
     end
 
     -- 3. 节点未配置
-    if not node_id or tostring(node_id) == "0" or tostring(node_id) == "" then
+    if not node_id or util.int_str(node_id) == "0" or util.int_str(node_id) == "" then
         table.insert(issues, {
             level  = "error",
             title  = "Node not configured",

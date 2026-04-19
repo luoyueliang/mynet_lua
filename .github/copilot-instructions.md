@@ -141,7 +141,10 @@ ipk 安装时已将脚本部署到 `scripts/` 目录，无需运行时搜索。
 ## ✅ 必须遵守的规范
 
 ### node_id 处理
-- Lua 侧所有 node_id 用于路径/API 时必须经过 `util.int_str(v)` 或 `nid(v)` 转换
+- **所有 node_id 都在 JavaScript 安全整数范围内（≤ 2^53），Lua number 可精确表示**
+- 但 Lua `tostring()` 对大于 1e14 的数仍可能产生科学计数法（如 `"3.84e+15"`）
+- 因此：Lua 侧所有 node_id 用于路径/API/字符串拼接时**必须**经过 `util.int_str(v)` 或 `nid(v)` 转换
+- **禁止**在任何文件中使用 `tostring(node_id)` / `tostring(n.node_id)` 拼接路径或消息
 - node.lua 顶部定义：`local function nid(v) return util.int_str(v) end`
 - JS 侧 `window.mnCurrentNodeId` 必须是字符串
 
@@ -166,6 +169,16 @@ ipk 安装时已将脚本部署到 `scripts/` 目录，无需运行时搜索。
 - 页面 node.htm 中 `nid_fmt()` 辅助函数用于格式化模板内整数
 - 所有视图中引用 zone 时检查 `zone ~= nil` 和 `zone.zone_name ~= ""`
 - route.conf 更新必须同时下载所有对端节点公钥写入 ed25519 目录
+
+### Proxy 分流架构（Critical — 不要改错层）
+代理流量**不走内核路由表**，而是走 nftables + 策略路由：
+1. **route.conf 注入**：`proxy.route_inject()` 在 route.conf 末尾添加 `/8` 大段路由（`#----proxy begin----` ... `#----proxy end----`），告诉 GNB 数据层"这些目标 IP 通过 VPN 隧道转发到 proxy peer"
+2. **nftables set**：`route_policy.sh` 将 domestic/international IP 列表加载到 nft set `mynet_proxy`
+3. **fwmark + 策略路由**：匹配 nft set 的包标记 `0xc8` → `ip rule fwmark 0xc8 lookup mynet_proxy` → `default via {peer_vip} dev gnb_tun_XX`
+4. **只处理转发流量**：PREROUTING chain 标记，OUTPUT chain 不标记（避免 GNB 隧道流量循环）
+5. **GNB 不支持热重载 route.conf**：route.conf 更新后需重启 GNB 才能加载新路由条目
+- route.conf 写入统一走 `node.write_local_config(nid, "route", content)` → `apply_local_config_side_effects` → `proxy.route_inject()`
+- **禁止**直接 `util.write_file()` 写 route.conf 绕过 side effects
 
 ### 部署
 - 同步命令：`bash debug/sync.sh all`
