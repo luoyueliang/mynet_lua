@@ -12,6 +12,20 @@ local util = require("luci.model.mynet.util")
 -- 安全整数字符串：避免 Lua 大整数变成科学计数法
 local function nid(v) return util.int_str(v) end
 
+-- 鉴权 + zone 上下文（减少重复模板）
+local function auth_context()
+    local current, err = auth.ensure_valid()
+    if err then return nil, nil, err end
+    local zone = cfg.load_current_zone()
+    local zone_id = zone and zone.zone_id or "0"
+    return current, zone_id, nil
+end
+
+-- ed25519 公钥格式校验（64 hex chars = 32 bytes）
+local function is_valid_ed25519_pub(hex)
+    return hex and #hex == 64 and hex:match("^[0-9a-fA-F]+$") ~= nil
+end
+
 -- ─────────────────────────────────────────────────────────────
 -- 节点状态码（与 Go 项目保持一致）
 -- ─────────────────────────────────────────────────────────────
@@ -46,18 +60,14 @@ M.STATUS_NAMES = {
 -- nodes_data_table 含 .data (节点数组)、.total、.current_page、.last_page
 -- ─────────────────────────────────────────────────────────────
 function M.get_nodes(page, per_page)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return nil, err end
-
-    local zone = cfg.load_current_zone()
-    if not zone or not zone.zone_id or tostring(zone.zone_id) == "0" then
-        return nil, "no zone selected"
-    end
+    if zone_id == "0" then return nil, "no zone selected" end
 
     local endpoint = string.format("/nodes?page=%d&per_page=%d",
         page or 1, per_page or 20)
     local data, api_err = api.get_json(cfg.get_api_url(), endpoint,
-        current.token, zone.zone_id)
+        current.token, zone_id)
     if api_err then return nil, api_err end
     if not data or not data.success then
         return nil, (data and data.message) or "failed to get nodes"
@@ -73,13 +83,9 @@ end
 -- 直接返回可写入 node.conf 的文本
 -- ─────────────────────────────────────────────────────────────
 function M.get_node_config_rendered(node_id)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return nil, err end
-
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
     local endpoint = string.format("/nodes/%s/config?render_conf=1", nid(node_id))
-
     return api.get_text(cfg.get_api_url(), endpoint, current.token, zone_id)
 end
 
@@ -88,13 +94,9 @@ end
 -- 对应 Go: GET /route/node/{id}?render_conf=1
 -- ─────────────────────────────────────────────────────────────
 function M.get_route_config_rendered(node_id)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return nil, err end
-
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
     local endpoint = string.format("/route/node/%s?render_conf=1", nid(node_id))
-
     return api.get_text(cfg.get_api_url(), endpoint, current.token, zone_id)
 end
 
@@ -103,12 +105,8 @@ end
 -- 对应 Go: GET /zones/services/indexes?render_conf=1
 -- ─────────────────────────────────────────────────────────────
 function M.get_services_index()
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return nil, err end
-
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
-
     return api.get_text(cfg.get_api_url(),
         "/zones/services/indexes?render_conf=1", current.token, zone_id)
 end
@@ -119,111 +117,17 @@ end
 -- 返回: (bundle_table, nil) 或 (nil, error_string)
 -- ─────────────────────────────────────────────────────────────
 function M.get_config_bundle(node_id)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return nil, err end
 
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
-    local endpoint = string.format("/nodes/%s/config-bundle", nid(node_id))
-
-    local data, api_err = api.get_json(cfg.get_api_url(), endpoint,
+    -- config-bundle 返回裸对象（无 {success,data} 包装），使用 api.get_config_bundle
+    local data, api_err = api.get_config_bundle(cfg.get_api_url(), nid(node_id),
         current.token, zone_id)
     if api_err then return nil, api_err end
-    if not data or not data.success then
-        return nil, (data and data.message) or "config-bundle failed"
+    if not data then
+        return nil, "empty config-bundle response"
     end
-    return data.data, nil
-end
-
--- ─────────────────────────────────────────────────────────────
--- sync_config_bundle: 通过 config-bundle API 一次性写入全部配置+密钥
--- 返回: { ok, files=[], errors=[] }
--- ─────────────────────────────────────────────────────────────
-function M.sync_config_bundle(node_id)
-    local results = { ok = true, files = {}, errors = {} }
-    local n = nid(node_id)
-    local conf_dir = string.format("%s/%s", util.GNB_CONF_DIR, n)
-    util.ensure_dir(conf_dir)
-
-    local bundle, err = M.get_config_bundle(node_id)
-    if err then
-        results.ok = false
-        results.errors[#results.errors+1] = "config-bundle: " .. err
-        return results
-    end
-
-    local files = bundle.files or {}
-
-    -- 写入 node.conf
-    if files["node.conf"] and files["node.conf"] ~= "" then
-        local path = string.format("%s/%s/node.conf", cfg.get_gnb_conf_root(), n)
-        local ok, we = util.write_file(path, files["node.conf"] .. "\n")
-        if ok then
-            results.files[#results.files+1] = path
-        else
-            results.ok = false
-            results.errors[#results.errors+1] = "write node.conf: " .. (we or "")
-        end
-    end
-
-    -- 写入 address.conf
-    if files["address.conf"] and files["address.conf"] ~= "" then
-        local path = string.format("%s/address.conf", conf_dir)
-        local ok, we = util.write_file(path, files["address.conf"] .. "\n")
-        if ok then
-            results.files[#results.files+1] = path
-        else
-            util.log_warn("sync_config_bundle: write address.conf: " .. (we or ""))
-        end
-    end
-
-    -- 写入 route.conf
-    if files["route.conf"] and files["route.conf"] ~= "" then
-        local path = string.format("%s/route.conf", conf_dir)
-        local ok, we = util.write_file(path, files["route.conf"] .. "\n")
-        if ok then
-            results.files[#results.files+1] = path
-        else
-            results.ok = false
-            results.errors[#results.errors+1] = "write route.conf: " .. (we or "")
-        end
-    end
-
-    -- 写入密钥
-    local keys = bundle.keys or {}
-
-    -- ed25519 公钥（对端）
-    local ed = keys.ed25519 or {}
-    if next(ed) then
-        local ed_dir = string.format("%s/ed25519", conf_dir)
-        util.ensure_dir(ed_dir)
-        local count = 0
-        for peer_id, pub_hex in pairs(ed) do
-            pub_hex = util.trim(pub_hex)
-            if #pub_hex == 64 and pub_hex:match("^[0-9a-fA-F]+$") then
-                util.write_file(string.format("%s/%s.public", ed_dir, peer_id), pub_hex)
-                count = count + 1
-            end
-        end
-        if count > 0 then
-            results.files[#results.files+1] = string.format("peer_keys(%d)", count)
-        end
-    end
-
-    -- security 密钥（本节点）
-    local sec = keys.security or {}
-    if sec.private and sec.private ~= "" then
-        local sec_dir = string.format("%s/security", conf_dir)
-        util.ensure_dir(sec_dir)
-        local priv_path = string.format("%s/%s.private", sec_dir, n)
-        util.write_file(priv_path, util.trim(sec.private))
-        os.execute("chmod 600 " .. priv_path .. " 2>/dev/null")
-        if sec.public and sec.public ~= "" then
-            util.write_file(string.format("%s/%s.public", sec_dir, n), util.trim(sec.public))
-        end
-    end
-
-    return results
+    return data, nil
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -231,11 +135,8 @@ end
 -- 对应 Go: PATCH /nodes/{id}/status
 -- ─────────────────────────────────────────────────────────────
 function M.update_node_status(node_id, status_code)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return nil, err end
-
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
     local endpoint = string.format("/nodes/%s/status", nid(node_id))
 
     local data, api_err = api.patch_json(cfg.get_api_url(), endpoint,
@@ -245,15 +146,6 @@ function M.update_node_status(node_id, status_code)
         return nil, (data and data.message) or "status update failed"
     end
     return true, nil
-end
-
--- ─────────────────────────────────────────────────────────────
--- 将节点 route.conf 同步到 /etc/mynet/conf/route.conf
--- 调用 generate_network_conf 生成 <cidr> via <gateway> 格式
--- 供 service tab 显示和 rc.mynet 启动脚本使用
--- ─────────────────────────────────────────────────────────────
-function M.sync_top_route_conf(node_id)
-    M.generate_network_conf(node_id)
 end
 
 -- Guest 模式：从 guest.json 的 index_addr 生成 address.conf 内容
@@ -304,7 +196,7 @@ function M.refresh_configs(node_id)
         local ok, we = util.write_file(route_path, route_text .. "\n")
         if ok then
             results.files[#results.files+1] = route_path
-            M.sync_top_route_conf(node_id)
+            M.generate_network_conf(node_id)
             -- proxy route re-inject（route.conf 被全量覆写后需重新注入）
             local proxy_m = require("luci.model.mynet.proxy")
             local pcfg = proxy_m.load_config()
@@ -353,13 +245,10 @@ end
 -- 返回: { ok, files=[], errors=[], method="bundle"|"legacy" }
 -- ─────────────────────────────────────────────────────────────
 function M.refresh_configs_bundle(node_id)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then
         return { ok = false, files = {}, errors = { "auth: " .. err }, method = "legacy" }
     end
-
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
     local self_nid = nid(node_id)
 
     -- 尝试 bundle API
@@ -396,7 +285,7 @@ function M.refresh_configs_bundle(node_id)
             if ok then
                 results.files[#results.files + 1] = dest
                 if fname == "route.conf" then
-                    M.sync_top_route_conf(node_id)
+                    M.generate_network_conf(node_id)
                     -- proxy route re-inject
                     local proxy_m = require("luci.model.mynet.proxy")
                     local pcfg = proxy_m.load_config()
@@ -421,7 +310,7 @@ function M.refresh_configs_bundle(node_id)
         if type(pub_hex) == "table" then pub_hex = pub_hex.public_key end
         if pub_hex and pub_hex ~= "" then
             pub_hex = util.trim(pub_hex)
-            if #pub_hex == 64 and pub_hex:match("^[0-9a-fA-F]+$") then
+            if is_valid_ed25519_pub(pub_hex) then
                 util.write_file(string.format("%s/%s.public", ed_dir, peer_id), pub_hex)
                 key_count = key_count + 1
             end
@@ -440,6 +329,12 @@ function M.refresh_configs_bundle(node_id)
         M.save_public_key(node_id, sec.public)
     end
 
+    -- 补全 route.conf 中缺失的 peer 公钥（bundle 通常只含少量）
+    local pk_result = M.refresh_peer_keys_batch(node_id)
+    if pk_result.count > 0 then
+        results.files[#results.files + 1] = string.format("peer_keys_api(%d)", pk_result.count)
+    end
+
     return results
 end
 
@@ -449,11 +344,8 @@ end
 -- 返回: (node_table, nil) 或 (nil, error_string)
 -- ─────────────────────────────────────────────────────────────
 function M.get_single_node(node_id)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return nil, err end
-
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
     local endpoint = string.format("/nodes/%s", nid(node_id))
 
     local data, api_err = api.get_json(cfg.get_api_url(), endpoint, current.token, zone_id)
@@ -680,11 +572,8 @@ end
 -- 返回: { ok, count, errors=[] }
 -- ─────────────────────────────────────────────────────────────
 function M.refresh_peer_keys(node_id)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return { ok = false, count = 0, errors = { "auth: " .. err } } end
-
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
     local self_nid = nid(node_id)
 
     -- 从本地 route.conf 提取对端 node ID
@@ -710,7 +599,7 @@ function M.refresh_peer_keys(node_id)
         if pub_hex and pub_hex ~= "" then
             pub_hex = util.trim(pub_hex)
             -- 验证：64 hex chars（GNB ed25519 公钥 32 字节）
-            if #pub_hex == 64 and pub_hex:match("^[0-9a-fA-F]+$") then
+            if is_valid_ed25519_pub(pub_hex) then
                 local key_path = string.format("%s/%s.public", ed25519_dir, peer_id)
                 -- 写入时不加换行，与 mynet_tui 行为一致
                 util.write_file(key_path, pub_hex)
@@ -731,11 +620,8 @@ end
 -- 返回: { ok, count, errors=[], method="batch"|"legacy" }
 -- ─────────────────────────────────────────────────────────────
 function M.refresh_peer_keys_batch(node_id)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return { ok = false, count = 0, errors = { "auth: " .. err }, method = "legacy" } end
-
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
     local self_nid = nid(node_id)
 
     local kdata, kerr = api.get_router_keys(
@@ -765,7 +651,7 @@ function M.refresh_peer_keys_batch(node_id)
         local pub_hex = (type(v) == "string") and v or (type(v) == "table" and v.public_key or nil)
         if pub_hex and pub_hex ~= "" then
             pub_hex = util.trim(pub_hex)
-            if #pub_hex == 64 and pub_hex:match("^[0-9a-fA-F]+$") then
+            if is_valid_ed25519_pub(pub_hex) then
                 util.write_file(string.format("%s/%s.public", ed25519_dir, peer_id), pub_hex)
                 count = count + 1
             else
@@ -822,14 +708,11 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function M.get_vpn_service_status()
-    -- 直接检测 gnb 进程（init.d status 在 OpenWrt 不可靠，无 status 命令时总是返回 0）
+    -- 通过 pidfile + cmdline 验证（多实例安全，不使用全局 pidof）
     local node_id = cfg.get_node_id()
     if node_id and node_id ~= 0 then
         if M.gnb_is_running(node_id) then return "running" end
     end
-    -- 兜底：pgrep
-    local ps = util.trim(util.exec("pgrep gnb 2>/dev/null") or "")
-    if ps ~= "" then return "running" end
     return "stopped"
 end
 
@@ -949,7 +832,7 @@ function M.preflight_check(node_id)
         end
     end
 
-    -- 4. address.conf 至少包含一条有效记录（非空非注释行）
+    -- 4. address.conf（空内容为 warning，不阻塞启动）
     local addr_path = string.format("%s/%s/address.conf", util.GNB_CONF_DIR, n)
     local addr_conf = util.read_file(addr_path) or ""
     local addr_has_record = false
@@ -960,8 +843,12 @@ function M.preflight_check(node_id)
             break
         end
     end
-    add("address_conf", addr_has_record,
-        not addr_has_record and "no valid records in " .. addr_path or "ok")
+    if not addr_has_record then
+        checks[#checks + 1] = { name = "address_conf", ok = true,
+            detail = "warning: no records in " .. addr_path }
+    else
+        checks[#checks + 1] = { name = "address_conf", ok = true, detail = "ok" }
+    end
 
     -- 5. 私钥存在（128 hex chars）
     local priv_path = string.format("%s/%s/security/%s.private", util.GNB_CONF_DIR, n, n)
@@ -973,7 +860,7 @@ function M.preflight_check(node_id)
     -- 5b. 公钥存在（64 hex chars）
     local pub_path = string.format("%s/%s/security/%s.public", util.GNB_CONF_DIR, n, n)
     local pub_hex  = util.trim(util.read_file(pub_path) or "")
-    local pub_ok   = #pub_hex == 64 and pub_hex:match("^[0-9a-fA-F]+$") ~= nil
+    local pub_ok   = is_valid_ed25519_pub(pub_hex)
     add("public_key", pub_ok,
         not pub_ok and "missing or invalid: " .. pub_path or "ok")
 
@@ -1185,14 +1072,67 @@ local function gnb_pidfile(node_id)
     return string.format("%s/%s/gnb.pid", util.GNB_CONF_DIR, nid(node_id))
 end
 
+-- 查找 gnb 主进程的 gnb_es 子进程 PID（通过 PPID 匹配）
+local function find_child_gnb_es(gnb_pid)
+    local pids = {}
+    local out = util.exec("pidof gnb_es 2>/dev/null") or ""
+    for pid_str in out:gmatch("%d+") do
+        local ppid = util.trim(util.exec(
+            "awk '{print $4}' /proc/" .. pid_str .. "/stat 2>/dev/null") or "")
+        if ppid == tostring(gnb_pid) then
+            pids[#pids + 1] = tonumber(pid_str)
+        end
+    end
+    return pids
+end
+
+-- 通过二进制路径查找属于本 mynet 安装的 gnb_es（兜底：gnb 已崩溃时 PPID=1）
+local function find_our_gnb_es_by_bin()
+    local es_bin = util.GNB_BIN_DIR .. "/gnb_es"
+    local pids = {}
+    local out = util.exec("pidof gnb_es 2>/dev/null") or ""
+    for pid_str in out:gmatch("%d+") do
+        local exe = util.trim(util.exec(
+            "readlink /proc/" .. pid_str .. "/exe 2>/dev/null") or "")
+        if exe == es_bin then
+            pids[#pids + 1] = tonumber(pid_str)
+        end
+    end
+    return pids
+end
+
+-- 等待指定 gnb_es PID 列表退出，超时后仅 kill 这些特定进程
+local function wait_and_kill_gnb_es(pids, timeout_sec)
+    if #pids == 0 then return end
+    for _ = 1, timeout_sec do
+        local alive = false
+        for _, pid in ipairs(pids) do
+            local _, code = util.exec_status("kill -0 " .. pid)
+            if code == 0 then alive = true; break end
+        end
+        if not alive then return end
+        util.exec("sleep 1")
+    end
+    for _, pid in ipairs(pids) do
+        local _, code = util.exec_status("kill -0 " .. pid)
+        if code == 0 then
+            util.log_warn("node", "gnb_es pid " .. pid .. " did not exit naturally, killing")
+            util.exec("kill " .. pid .. " 2>/dev/null; true")
+        end
+    end
+end
+
 function M.gnb_is_running(node_id)
     local pidfile = gnb_pidfile(node_id)
     local pid_str = util.trim(util.read_file(pidfile) or "")
     if pid_str == "" then return false end
     local pid = tonumber(pid_str)
     if not pid then return false end
-    local stat = util.exec("test -d /proc/" .. pid .. " && echo y 2>/dev/null")
-    return util.trim(stat or "") == "y"
+    -- 验证 /proc/{pid}/cmdline 包含该节点的 conf 目录（多实例安全）
+    local cmdline = util.read_file("/proc/" .. pid .. "/cmdline")
+    if not cmdline or cmdline == "" then return false end
+    local conf_dir = string.format("%s/%s", util.GNB_CONF_DIR, nid(node_id))
+    return cmdline:find(conf_dir, 1, true) ~= nil
 end
 
 function M.start_gnb(node_id)
@@ -1282,15 +1222,25 @@ function M.stop_gnb(node_id)
     save_svc_state(M.SVC_STATE.STOPPING, "killing gnb")
     local pidfile = gnb_pidfile(node_id)
     local pid_str = util.trim(util.read_file(pidfile) or "")
+    local es_pids = {}
     if pid_str ~= "" then
         local pid_num = tonumber(pid_str)
         if pid_num then
+            -- 杀 gnb 前：记录其 gnb_es 子进程 PID（PPID 匹配）
+            es_pids = find_child_gnb_es(pid_num)
             util.exec("kill " .. pid_num .. " 2>/dev/null; true")
             util.exec("sleep 1")
             util.exec("kill -9 " .. pid_num .. " 2>/dev/null; true")
         end
         util.exec("rm -f '" .. pidfile .. "'")
     end
+    -- gnb_es 由 gnb fork；优先等待自然退出，超时后仅 kill 本实例的 gnb_es
+    -- 若 PPID 方式未找到（gnb 已崩溃），按二进制路径匹配
+    if #es_pids == 0 then
+        es_pids = find_our_gnb_es_by_bin()
+    end
+    wait_and_kill_gnb_es(es_pids, 3)
+    -- 注意：不删除 TUN 接口（接口在安装时创建，持久存在，start/stop 不影响）
     save_svc_state(M.SVC_STATE.STOPPED, "gnb stopped")
     return true, nil
 end
@@ -1312,12 +1262,21 @@ function M.get_vpn_interface_status()
     local out = util.exec("ip link show " .. iface .. " 2>/dev/null")
     if not out or out == "" then return nil end
 
+    -- TUN/TAP 设备的 operstate 始终是 UNKNOWN（无物理链路层），
+    -- 但 flags 含 UP 时实际工作正常，对用户显示为 "UP"
+    local raw_state = out:match("state%s+(%w+)") or "unknown"
+    local flags     = out:match("<(.-)>") or ""
+    local display_state = raw_state
+    if raw_state == "UNKNOWN" and flags:find("UP") then
+        display_state = "UP"
+    end
+
     return {
         interface = iface,
-        state     = out:match("state%s+(%w+)") or "unknown",
+        state     = display_state,
         mtu       = tonumber(out:match("mtu%s+(%d+)")),
-        flags     = out:match("<(.-)>"),
-        rx_bytes  = nil,  -- 可通过 /sys/class/net/{iface}/statistics/ 获取
+        flags     = flags,
+        rx_bytes  = nil,
         tx_bytes  = nil,
     }
 end
@@ -1362,11 +1321,8 @@ end
 -- 返回: pub_hex, nil  或  nil, error_string
 -- ─────────────────────────────────────────────────────────────
 function M.fetch_server_public_key(node_id)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return nil, err end
-
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
     local endpoint = string.format("/nodes/%s/keys", nid(node_id))
 
     local kdata, kerr = api.get_json(cfg.get_api_url(), endpoint, current.token, zone_id)
@@ -1380,7 +1336,7 @@ function M.fetch_server_public_key(node_id)
         return nil, "no public_key in server response"
     end
     pub_hex = util.trim(pub_hex)
-    if #pub_hex ~= 64 or not pub_hex:match("^[0-9a-fA-F]+$") then
+    if not is_valid_ed25519_pub(pub_hex) then
         return nil, string.format("invalid public key from server (len=%d)", #pub_hex)
     end
     -- 写入 security/ 和 ed25519/ 目录
@@ -1389,19 +1345,28 @@ function M.fetch_server_public_key(node_id)
     return pub_hex, nil
 end
 
--- 上传公钥到服务器（POST /nodes/{id}/keys/upload）
+-- 上传公钥到服务器（POST /nodes/{id}/keys）
 -- 返回: true, nil  或  nil, error_string
 -- ─────────────────────────────────────────────────────────────────────────────
 function M.upload_public_key(node_id, pub_hex)
-    local current, err = auth.ensure_valid()
+    local current, zone_id, err = auth_context()
     if err then return nil, err end
 
-    local zone    = cfg.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
-    local endpoint = string.format("/nodes/%s/keys/upload", nid(node_id))
+    -- 若未传入 pub_hex，读取本地公钥文件
+    if not pub_hex or pub_hex == "" then
+        local pub_path = string.format("%s/%s/ed25519/%s.public",
+            util.GNB_CONF_DIR, nid(node_id), nid(node_id))
+        local raw = util.read_file(pub_path)
+        if not raw or raw == "" then
+            return nil, "public key file not found: " .. pub_path
+        end
+        pub_hex = raw:gsub("%s+", "")
+    end
+
+    local endpoint = string.format("/nodes/%s/keys", nid(node_id))
 
     local data, api_err = api.post_json(cfg.get_api_url(), endpoint,
-        { custom_public_key = pub_hex, force_regenerate = true },
+        { public_key = pub_hex },
         current.token, zone_id)
     if api_err then return nil, api_err end
     if not data or not data.success then
@@ -1572,60 +1537,42 @@ local function wait_for_iface(ifname, timeout_s)
     return false
 end
 
--- ── 辅助：从 route.conf 解析对端路由 ────────────────────────
-
-local function parse_route_entries(node_id)
-    local self_nid = nid(node_id)
-    local route_path = string.format("%s/%s/route.conf", util.GNB_CONF_DIR, self_nid)
-    local content = util.trim(util.read_file(route_path) or "")
-    local routes = {}
-    for line in (content .. "\n"):gmatch("([^\n]*)\n") do
-        line = util.trim(line)
-        if line ~= "" and not line:match("^#") then
-            local nid_val, network, netmask = line:match("^([^|]+)|([^|]+)|(.+)$")
-            if nid_val and nid_val ~= self_nid then
-                routes[#routes + 1] = { network = util.trim(network), netmask = util.trim(netmask) }
-            end
-        end
-    end
-    return routes
-end
-
--- ── netmask → CIDR ──
-
-local function mask_to_cidr(mask)
-    local map = {
-        ["255.255.255.255"] = 32, ["255.255.255.0"] = 24,
-        ["255.255.0.0"] = 16, ["255.0.0.0"] = 8,
-        ["255.255.255.128"] = 25, ["255.255.255.192"] = 26,
-        ["255.255.255.224"] = 27, ["255.255.255.240"] = 28,
-        ["255.255.255.248"] = 29, ["255.255.255.252"] = 30,
-        ["255.255.128.0"] = 17, ["255.255.192.0"] = 18,
-        ["255.255.224.0"] = 19, ["255.255.240.0"] = 20,
-        ["255.255.248.0"] = 21, ["255.255.252.0"] = 22,
-        ["255.255.254.0"] = 23,
-    }
-    return map[mask] or 24
-end
-
 -- ── Layer 2: 路由管理 ────────────────────────────────────────
+
+-- IP + Netmask → 网络基地址（纯整数运算，无需 bit 库）
+local function ip_network_base(ip, netmask)
+    local a1, a2, a3, a4 = ip:match("(%d+)%.(%d+)%.(%d+)%.(%d+)")
+    local m1, m2, m3, m4 = netmask:match("(%d+)%.(%d+)%.(%d+)%.(%d+)")
+    if not a1 or not m1 then return nil end
+    local function band(a, m)
+        a, m = tonumber(a), tonumber(m)
+        return a - (a % (256 - m))
+    end
+    return string.format("%d.%d.%d.%d", band(a1, m1), band(a2, m2), band(a3, m3), band(a4, m4))
+end
 
 function M.apply_routes(node_id)
     local tun = parse_tun_iface(node_id)
     if not tun then return { ok = false, count = 0, errors = {"cannot determine tun interface"} } end
 
-    local routes = parse_route_entries(node_id)
+    local self_nid = nid(node_id)
+    local route_path = string.format("%s/%s/route.conf", util.GNB_CONF_DIR, self_nid)
+    local content = util.trim(util.read_file(route_path) or "")
+    local entries = parse_gnb_route_conf(content)
     local count = 0
     local errors = {}
-    for _, r in ipairs(routes) do
-        local cidr = mask_to_cidr(r.netmask)
-        local dest = r.network .. "/" .. cidr
-        local _, code = util.exec_status(string.format(
-            "ip route replace %s dev %s 2>&1", dest, tun))
-        if code == 0 then
-            count = count + 1
-        else
-            errors[#errors + 1] = "route " .. dest .. " failed"
+    for _, e in ipairs(entries) do
+        if e.node_id ~= self_nid then
+            local cidr = netmask_to_cidr(e.netmask)
+            local base = ip_network_base(e.network, e.netmask) or e.network
+            local dest = base .. "/" .. cidr
+            local _, code = util.exec_status(string.format(
+                "ip route replace %s dev %s 2>&1", dest, tun))
+            if code == 0 then
+                count = count + 1
+            else
+                errors[#errors + 1] = "route " .. dest .. " failed"
+            end
         end
     end
     util.log_info(string.format("apply_routes: %d route(s) applied for node %s", count, nid(node_id)))
@@ -1690,6 +1637,9 @@ function M.apply_firewall(node_id)
     for _, cmd in ipairs(cmds) do
         util.exec(cmd .. " 2>/dev/null; true")
     end
+
+    -- 同步 network.mynet.device（确保与防火墙一致）
+    util.exec("uci set network.mynet.device='" .. tun .. "' 2>/dev/null; true")
 
     -- 确保 lan→mynet forwarding 存在
     local has_fwd = false

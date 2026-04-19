@@ -216,7 +216,27 @@ function M.generate_mynet_conf(node_id)
         gnb_conf = ""
     else
         -- gnb (default)
-        vpn_interface = "gnb_tun"
+        -- 接口名唯一权威来源：node.conf 的 ifname 字段
+        -- （系统中可能运行多个 gnb 实例，不能用 ip link 探测）
+        local node_conf_path = util.GNB_CONF_DIR .. "/" .. nid_str .. "/node.conf"
+        local node_conf = util.read_file(node_conf_path) or ""
+        local iface_from_conf = node_conf:match("^ifname%s+(%S+)") or node_conf:match("\nifname%s+(%S+)")
+        local base_iface = (iface_from_conf and iface_from_conf ~= "") and iface_from_conf or "gnb_tun"
+        -- 若 GNB 已运行，尝试找以 base_iface 开头的实际接口（如 gnb_tun_16）
+        -- 多实例下通过 node_id 对应的 pid 文件确认
+        local actual_iface = base_iface
+        local gnb_pid_file = util.GNB_CONF_DIR .. "/" .. nid_str .. "/gnb.pid"
+        if util.file_exists(gnb_pid_file) then
+            local pid = util.trim(util.read_file(gnb_pid_file) or "")
+            if pid ~= "" then
+                -- 从 /proc/{pid}/net/if_inet6 或 ip link 找以 base_iface 开头的接口
+                local found = util.trim(util.exec(
+                    "ip link show 2>/dev/null | grep -o '" .. base_iface .. "[^:@]*'" ..
+                    " | head -1") or "")
+                if found ~= "" then actual_iface = found end
+            end
+        end
+        vpn_interface = actual_iface
         gnb_bin = M.get_gnb_bin()
         gnb_conf = util.GNB_CONF_DIR .. "/" .. nid_str
         vpn_binary = gnb_bin
@@ -271,8 +291,29 @@ function M.generate_mynet_conf(node_id)
         'CLEANUP_ON_STOP="1"',
     }
 
+    -- 检测接口名变更 → 同步更新 UCI network/firewall 绑定
+    local old_iface = M.get_vpn_interface()
     util.ensure_dir(util.CONF_DIR)
-    return util.write_file(util.VPN_CONF, table.concat(lines, "\n") .. "\n")
+    local ok, err = util.write_file(util.VPN_CONF, table.concat(lines, "\n") .. "\n")
+    if ok and vpn_interface ~= old_iface and vpn_interface ~= "" then
+        util.log_info("config", "VPN interface changed: " .. (old_iface or "?") .. " → " .. vpn_interface)
+        -- 更新 UCI network.mynet.device
+        util.exec("uci set network.mynet.device='" .. vpn_interface .. "' 2>/dev/null")
+        util.exec("uci commit network 2>/dev/null")
+        -- 更新 firewall zone device（遍历查找 mynet zone）
+        for i = 0, 15 do
+            local name = util.trim(util.exec(
+                string.format("uci get firewall.@zone[%d].name 2>/dev/null", i)) or "")
+            if name == "" then break end
+            if name == "mynet" then
+                util.exec(string.format(
+                    "uci set firewall.@zone[%d].device='%s' 2>/dev/null", i, vpn_interface))
+                util.exec("uci commit firewall 2>/dev/null")
+                break
+            end
+        end
+    end
+    return ok, err
 end
 
 -- ─────────────────────────────────────────────────────────────

@@ -1,650 +1,179 @@
 #!/bin/sh /etc/rc.common
-# MyNet - OpenWrt 服务脚本
-# 职责: 读取配置 → 启动 VPN → 配置路由 → 配置防火墙 NAT
-# 执行顺序: VPN 进程启动 → 设备出现 → route 配置 → masq 配置
+# MyNet VPN 服务脚本 (thin shell wrapper)
 #
-# NOTE: 防火墙配置策略 (新架构)
-#   - install (安装阶段): firewall.mynet install
-#     创建 network.mynet, zone, forwarding, include 脚本
-#   - start (启动阶段): firewall.mynet start
-#     仅管理 NAT masq 规则(幂等,检查后添加)
-#   - stop (停止阶段): firewall.mynet stop
-#     不删除 masq 规则,保持配置
-#   - uninstall (卸载阶段): firewall.mynet uninstall
-#     清理所有防火墙配置
-#   - 优点:
-#     * zone masq=1 有时失效,动态 masq 更可靠
-#     * include 脚本确保防火墙重启后 masq 自动恢复
-#     * 启动更快,不重启防火墙
+# 架构:
+#   Shell  — 配置加载、路由/防火墙脚本调用、插件钩子
+#   Lua    — GNB 进程启停、pre-flight 检查、gnb_es 精确清理
 #
-# IMPORTANT: This is an OpenWrt init script!
-# Do NOT run it directly! It must be installed to /etc/init.d/ and called through that path.
-#
-# Correct usage:
-#   /etc/init.d/mynet start|stop|restart|status|enable|disable
-#
-# Incorrect usage:
-#   ./rc.mynet              # ❌ Will hang!
-#   bash rc.mynet           # ❌ Will hang!
-#   rc.mynet --help         # ❌ Will hang!
+# 注意: GNB 进程管理完全委托给 luci.model.mynet.node
+#       路由/防火墙通过 route.mynet / firewall.mynet shell 脚本执行
 
-# 检查是否被直接运行（而不是通过 /etc/init.d）
-if [ -z "$IPKG_INSTROOT" ] && [ "$0" != "/etc/init.d/mynet" ] && [ "$(basename "$0")" = "rc.mynet" ]; then
-    cat >&2 << 'EOF'
-❌ ERROR: This is an OpenWrt init script and cannot be run directly!
-
-This script must be installed to /etc/init.d/mynet and executed through that path.
-
-Correct usage:
-    /etc/init.d/mynet start
-    /etc/init.d/mynet stop
-    /etc/init.d/mynet restart
-    /etc/init.d/mynet status
-    /etc/init.d/mynet enable
-    /etc/init.d/mynet disable
-
-Installation:
-    cp rc.mynet /etc/init.d/mynet
-    chmod +x /etc/init.d/mynet
-
-For more information, see: RC_MYNET_HANG_ISSUE.md
-EOF
+# ── 直接运行防护 ────────────────────────────────────────────────
+if [ -z "$IPKG_INSTROOT" ] && \
+   [ "$0" != "/etc/init.d/mynet" ] && \
+   [ "$(basename "$0")" = "rc.mynet" ]; then
+    echo "ERROR: Run as: /etc/init.d/mynet start|stop|restart|status" >&2
     exit 1
 fi
 
 START=99
 STOP=10
-# 不使用 procd - 手动管理进程
-# USE_PROCD=1
+EXTRA_COMMANDS="status install"
+EXTRA_HELP="        status          Show service status
+        install         Initialize service directories and config"
 
-# 默认配置文件路径(可通过环境变量覆盖)
 CONFIG_FILE="${MYNET_CONFIG_FILE:-/etc/mynet/conf/mynet.conf}"
 MYNET_HOME="${MYNET_HOME:-/etc/mynet}"
 
-log() {
-    logger -t mynet "$*"
-    echo "[MyNet] $*"
+log() { logger -t mynet "$*"; echo "[MyNet] $*"; }
+
+# ── load_config: 为 route/firewall 脚本加载 shell 变量 ─────────
+load_config() {
+    [ -f "$CONFIG_FILE" ] || { log "ERROR: Config not found: $CONFIG_FILE"; return 1; }
+    . "$CONFIG_FILE"
+    # 优先取 MYNET_ 前缀变量（向前兼容旧变量名）
+    VPN_TYPE="${MYNET_VPN_TYPE:-${VPN_TYPE}}"
+    VPN_INTERFACE="${MYNET_VPN_INTERFACE:-${VPN_INTERFACE}}"
+    [ -n "$VPN_TYPE" ] && [ -n "$VPN_INTERFACE" ] || {
+        log "ERROR: VPN_TYPE or VPN_INTERFACE not configured"; return 1
+    }
+    ROUTER_MODE="${MYNET_ROUTER_MODE:-${ROUTER_MODE:-auto}}"
+    ROUTE_CONFIG="${MYNET_ROUTE_CONFIG:-${ROUTE_CONFIG:-$MYNET_HOME/conf/route.conf}}"
+    log "Config: VPN=$VPN_TYPE Interface=$VPN_INTERFACE Mode=$ROUTER_MODE"
+    return 0
 }
 
-# 运行插件钩子
-# 参数: 钩子名称 (pre_start, post_start, stop)
+# ── Plugin hooks ────────────────────────────────────────────────
 run_plugin_hooks() {
     local hook_name="$1"
     local plugin_dir="$MYNET_HOME/scripts/plugin"
-    
-    # 如果 plugin 目录不存在,跳过
     [ -d "$plugin_dir" ] || return 0
-    
-    # 遍历所有插件目录
     for plugin_path in "$plugin_dir"/*; do
         [ -d "$plugin_path" ] || continue
-        
-        local plugin_name=$(basename "$plugin_path")
+        local plugin_name
+        plugin_name=$(basename "$plugin_path")
         local hook_script="$plugin_path/${hook_name}.sh"
-        
-        # 检查钩子脚本是否存在且可执行
         if [ -f "$hook_script" ] && [ -x "$hook_script" ]; then
             log "Running plugin hook: $plugin_name/${hook_name}.sh"
-            # 导出 MYNET_HOME 环境变量供钩子使用
-            MYNET_HOME="$MYNET_HOME" "$hook_script" || {
-                local exit_code=$?
-                log "WARNING: Plugin hook $plugin_name/${hook_name}.sh failed with exit code $exit_code"
-            }
+            MYNET_HOME="$MYNET_HOME" "$hook_script" || \
+                log "WARNING: Plugin hook $plugin_name/${hook_name}.sh failed (exit $?)"
         fi
     done
 }
 
-# 获取 GNB PID 文件路径
-# GNB 默认在其配置目录下创建 gnb.pid 文件
-get_gnb_pid_file() {
-    # GNB 的 PID 文件位于配置目录下
-    # 例如: /etc/mynet/driver/gnb/conf/1234/gnb.pid
-    if [ -n "$VPN_CONFIG" ]; then
-        echo "$VPN_CONFIG/gnb.pid"
-    else
-        echo ""
-    fi
-}
-
-# 获取当前运行的进程 PID
-# 返回: PID (如果找到) 或空字符串
-# 优先级: GNB的PID文件 > pgrep
-get_running_pid() {
-    local pid=""
-    
-    # 方法1: 从 GNB 的 PID 文件读取（GNB 原生文件，最准确）
-    local gnb_pid_file=$(get_gnb_pid_file)
-    if [ -n "$gnb_pid_file" ] && [ -f "$gnb_pid_file" ]; then
-        pid=$(cat "$gnb_pid_file" 2>/dev/null | tr -d '\n\r ')
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            # 验证是否是 GNB 进程（检查 cmdline）
-            if [ -f "/proc/$pid/cmdline" ]; then
-                local cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
-                if echo "$cmdline" | grep -q "gnb"; then
-                    echo "$pid"
-                    return 0
-                fi
-            fi
-        fi
-    fi
-    
-    # 方法2: 使用 pgrep (兜底方案)
-    if [ -n "$VPN_BINARY" ] && [ -n "$VPN_CONFIG" ]; then
-        local match_pattern="$VPN_BINARY.*$VPN_CONFIG"
-        pid=$(pgrep -f "$match_pattern" 2>/dev/null | head -n 1)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            echo "$pid"
-            return 0
-        fi
-    fi
-    
-    # 未找到进程
-    return 1
-}
-
-# 清理 GNB PID 文件
-# GNB 自己创建的 PID 文件，在进程异常退出时可能需要手动清理
-clear_gnb_pid() {
-    local gnb_pid_file=$(get_gnb_pid_file)
-    if [ -n "$gnb_pid_file" ] && [ -f "$gnb_pid_file" ]; then
-        rm -f "$gnb_pid_file"
-        log "Cleaned up stale GNB PID file: $gnb_pid_file"
-    fi
-}
-
-# 加载配置文件
-# 优先级: 环境变量 > 配置文件 > 默认值
-load_config() {
-    if [ ! -f "$CONFIG_FILE" ]; then
-        log "ERROR: Config not found: $CONFIG_FILE"
-        return 1
-    fi
-    
-    # 加载配置文件
-    . "$CONFIG_FILE"
-    
-    # 必要参数校验（环境变量可覆盖）
-    VPN_TYPE="${MYNET_VPN_TYPE:-${VPN_TYPE}}"
-    VPN_INTERFACE="${MYNET_VPN_INTERFACE:-${VPN_INTERFACE}}"
-    
-    if [ -z "$VPN_TYPE" ] || [ -z "$VPN_INTERFACE" ]; then
-        log "ERROR: VPN_TYPE or VPN_INTERFACE not configured"
-        return 1
-    fi
-    
-    # 驱动路径配置（支持多种字段名，统一逻辑）
-    # 优先级: 环境变量 > VPN_BINARY > DRIVER_PATH > 默认值
-    # 配置文件中可以使用 VPN_BINARY 或 DRIVER_PATH（推荐同时提供）
-    local default_driver_binary="$MYNET_HOME/driver/gnb/bin/gnb"
-    VPN_BINARY="${MYNET_VPN_BINARY:-${VPN_BINARY:-${DRIVER_PATH:-$default_driver_binary}}}"
-    
-    # VPN 配置目录
-    local default_vpn_config="$MYNET_HOME/driver/gnb/conf"
-    VPN_CONFIG="${MYNET_VPN_CONFIG:-${VPN_CONFIG:-$default_vpn_config}}"
-    
-    # 路由模式和路由配置
-    ROUTER_MODE="${MYNET_ROUTER_MODE:-${ROUTER_MODE:-auto}}"
-    ROUTE_CONFIG="${MYNET_ROUTE_CONFIG:-${ROUTE_CONFIG:-$MYNET_HOME/conf/route.conf}}"
-    
-    log "Config loaded: VPN=$VPN_TYPE, Interface=$VPN_INTERFACE, Mode=$ROUTER_MODE"
-    log "VPN Binary: $VPN_BINARY"
-    return 0
-}
-
-# 同步配置文件 - 从 driver 配置目录同步到 conf 目录
-# 如果 node.conf 或 route.conf 比 mynet.conf 更新，则需要重新生成 mynet.conf
-sync_config_files() {
-    log "检查配置文件同步状态..."
-    
-    # 获取节点 ID
-    local node_id
-    node_id=$(grep "^NODE_ID=" "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' "')
-    
-    if [ -z "$node_id" ]; then
-        log "无法从 mynet.conf 提取 NODE_ID，跳过配置同步"
-        return 0
-    fi
-    
-    # 获取 VPN 配置目录（默认）
-    local vpn_config_dir="${VPN_CONFIG:-$MYNET_HOME/driver/gnb/conf/$node_id}"
-    local node_conf="$vpn_config_dir/node.conf"
-    local route_conf="$vpn_config_dir/route.conf"
-    
-    # 检查源配置文件是否存在
-    if [ ! -f "$node_conf" ] && [ ! -f "$route_conf" ]; then
-        log "源配置文件不存在，无需同步"
-        return 0
-    fi
-    
-    # 获取文件修改时间（OpenWrt stat 格式）
-    local mynet_mtime=0
-    local node_mtime=0
-    local route_mtime=0
-    
-    if [ -f "$CONFIG_FILE" ]; then
-        mynet_mtime=$(stat -c %Y "$CONFIG_FILE" 2>/dev/null || echo "0")
-    fi
-    
-    if [ -f "$node_conf" ]; then
-        node_mtime=$(stat -c %Y "$node_conf" 2>/dev/null || echo "0")
-    fi
-    
-    if [ -f "$route_conf" ]; then
-        route_mtime=$(stat -c %Y "$route_conf" 2>/dev/null || echo "0")
-    fi
-    
-    # 检查是否需要更新
-    local needs_update=0
-    
-    if [ "$node_mtime" -gt "$mynet_mtime" ]; then
-        log "检测到 node.conf 更新 ($(date -d @"$node_mtime" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "newer"))"
-        needs_update=1
-    fi
-    
-    if [ "$route_mtime" -gt "$mynet_mtime" ]; then
-        log "检测到 route.conf 更新 ($(date -d @"$route_mtime" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "newer"))"
-        needs_update=1
-    fi
-    
-    if [ "$needs_update" -eq 1 ]; then
-        log "WARNING: 配置文件已过期，建议重新生成 mynet.conf"
-        log "提示: 在 TUI 中使用 '服务管理 -> 生成配置' 功能"
-        log "或者: 运行 'mynet refresh-config --node-id $node_id --auto'"
-        # 不自动重新生成，避免覆盖用户手动修改
-        # 只提示用户操作
-    else
-        log "配置文件同步检查完成，无需更新"
-    fi
-    
-    return 0
-}
-
-# 启动服务 (非 procd 模式使用 start 函数)
+# ── start ───────────────────────────────────────────────────────
 start() {
     log "Starting MyNet service..."
-    
-    # 加载配置
     load_config || return 1
-    
-    # 同步配置文件（检查 node.conf/route.conf 是否比 mynet.conf 更新）
-    sync_config_files
-    
-    # 检测当前服务是否已运行
-    # 使用统一的 get_running_pid() 方法（procd > PID文件 > pgrep）
-    local old_pid=$(get_running_pid)
-    if [ -n "$old_pid" ]; then
-        # 检查接口状态
-        if ip link show "$VPN_INTERFACE" >/dev/null 2>&1; then
-            log "ERROR: Service already running (PID: $old_pid, Interface: $VPN_INTERFACE)"
-            log "If you need to restart the service, please run: /etc/init.d/mynet restart"
-            return 1
-        else
-            # 进程存在但接口不存在 - 异常状态
-            log "ERROR: Found process (PID: $old_pid) but interface $VPN_INTERFACE is down"
-            log "This indicates an abnormal state. Please run: /etc/init.d/mynet restart"
-            log "Restart will properly clean up the old process and restart the service"
-            return 1
-        fi
-    fi
-    
-    # === 插件钩子: pre_start ===
     run_plugin_hooks "pre_start"
-    
-    # === 第 1 步: 启动 VPN 进程（必须先启动，才有设备） ===
-    case "$VPN_TYPE" in
-        gnb)
-            # GNB 启动逻辑
-            if [ ! -f "$VPN_BINARY" ]; then
-                log "ERROR: GNB binary not found: $VPN_BINARY"
-                return 1
-            fi
-            
-            if [ ! -d "$VPN_CONFIG" ]; then
-                log "ERROR: GNB config dir not found: $VPN_CONFIG"
-                return 1
-            fi
-            
-            # 直接后台启动 GNB (GNB 会自己 daemonize)
-            log "Starting GNB: $VPN_BINARY -c $VPN_CONFIG"
-            "$VPN_BINARY" -c "$VPN_CONFIG" >/dev/null 2>&1 &
-            
-            # 等待 GNB 进程启动并创建 PID 文件
-            log "Waiting for GNB to start..."
-            local wait_count=0
-            local gnb_pid=""
-            while [ $wait_count -lt 15 ]; do
-                # 方法1: 从 PID 文件读取
-                local gnb_pid_file=$(get_gnb_pid_file)
-                if [ -n "$gnb_pid_file" ] && [ -f "$gnb_pid_file" ]; then
-                    gnb_pid=$(cat "$gnb_pid_file" 2>/dev/null | tr -d '\n\r ')
-                    if [ -n "$gnb_pid" ] && kill -0 "$gnb_pid" 2>/dev/null; then
-                        log "✓ GNB process started (PID: $gnb_pid from file)"
-                        break
-                    fi
-                fi
-                
-                # 方法2: 使用 pgrep 查找进程
-                gnb_pid=$(pgrep -f "$VPN_BINARY.*$VPN_CONFIG" 2>/dev/null | head -n 1)
-                if [ -n "$gnb_pid" ] && kill -0 "$gnb_pid" 2>/dev/null; then
-                    log "✓ GNB process started (PID: $gnb_pid from pgrep)"
-                    break
-                fi
-                
-                sleep 1
-                wait_count=$((wait_count + 1))
-            done
-            
-            # 验证进程启动成功
-            if [ -z "$gnb_pid" ]; then
-                log "ERROR: GNB process failed to start after 15 seconds"
-                return 1
-            fi
-            
-            # 等待接口出现
-            log "Waiting for interface $VPN_INTERFACE to appear..."
-            local wait_count=0
-            local interface_found=0
-            local actual_interface=""
-            
-            while [ $wait_count -lt 10 ]; do
-                log "DEBUG: Check attempt $((wait_count + 1))/10"
-                
-                # 方法1: 使用 ip link 检查接口
-                log "DEBUG: Running: ip link show $VPN_INTERFACE"
-                if ip link show "$VPN_INTERFACE" >/dev/null 2>&1; then
-                    log "DEBUG: Method 1 SUCCESS - found $VPN_INTERFACE"
-                    interface_found=1
-                    actual_interface="$VPN_INTERFACE"
-                    break
-                else
-                    log "DEBUG: Method 1 FAILED - $VPN_INTERFACE not found"
-                fi
-                
-                # 方法2: 自动查找 gnb 开头的接口
-                log "DEBUG: Running: ip link show | grep -o 'gnb[^:@]*'"
-                local gnb_interfaces=$(ip link show | grep -o 'gnb[^:@]*' | head -n 5)
-                if [ -n "$gnb_interfaces" ]; then
-                    log "DEBUG: Method 2 found interfaces: $gnb_interfaces"
-                    for iface in $gnb_interfaces; do
-                        if [ -n "$iface" ]; then
-                            log "Found GNB interface: $iface (expected: $VPN_INTERFACE)"
-                            interface_found=1
-                            actual_interface="$iface"
-                            VPN_INTERFACE="$iface"
-                            break 2
-                        fi
-                    done
-                else
-                    log "DEBUG: Method 2 FAILED - no gnb interfaces found"
-                fi
-                
-                # 显示当前所有接口（调试用）
-                if [ $wait_count -eq 0 ] || [ $wait_count -eq 4 ] || [ $wait_count -eq 9 ]; then
-                    log "DEBUG: Current interfaces:"
-                    ip link show | grep -E "^[0-9]+:" | sed 's/^/  /' | logger -t mynet
-                fi
-                
-                sleep 1
-                wait_count=$((wait_count + 1))
-            done
-            
-            # 验证接口是否找到
-            if [ "$interface_found" -eq 0 ]; then
-                log "ERROR: Interface $VPN_INTERFACE not found after 10 seconds"
-                
-                # 详细诊断信息
-                log "DEBUG: Final diagnosis:"
-                
-                # 1. 检查进程状态
-                local final_pid=$(get_running_pid)
-                if [ -n "$final_pid" ]; then
-                    log "DEBUG: - GNB process IS running (PID: $final_pid)"
-                    log "DEBUG: - Process cmdline: $(cat /proc/$final_pid/cmdline 2>/dev/null | tr '\0' ' ')"
-                else
-                    log "DEBUG: - GNB process NOT running"
-                fi
-                
-                # 2. 检查 PID 文件
-                if [ -n "$gnb_pid_file" ]; then
-                    if [ -f "$gnb_pid_file" ]; then
-                        local file_pid=$(cat "$gnb_pid_file" 2>/dev/null)
-                        log "DEBUG: - PID file exists: $gnb_pid_file (contains: $file_pid)"
-                        if kill -0 "$file_pid" 2>/dev/null; then
-                            log "DEBUG: - PID $file_pid is alive"
-                        else
-                            log "DEBUG: - PID $file_pid is NOT alive"
-                        fi
-                    else
-                        log "DEBUG: - PID file NOT found: $gnb_pid_file"
-                    fi
-                fi
-                
-                # 3. 显示所有网络接口
-                log "DEBUG: - All network interfaces:"
-                ip link show | grep -E "^[0-9]+:" | sed 's/^/    /' | logger -t mynet
-                
-                # 4. 检查 /proc/net/dev
-                log "DEBUG: - Checking /proc/net/dev for gnb:"
-                if grep -q gnb /proc/net/dev 2>/dev/null; then
-                    log "DEBUG: - Found gnb in /proc/net/dev:"
-                    grep gnb /proc/net/dev | sed 's/^/    /' | logger -t mynet
-                else
-                    log "DEBUG: - No gnb interface in /proc/net/dev"
-                fi
-                
-                log "ERROR: GNB started but interface not detected. Check GNB logs."
-                return 1
-            fi
-            
-            # 接口找到，记录成功信息
-            log "✓ Interface $actual_interface is ready"
-            log "✓ GNB service started successfully"
-            ;;
-            
-        wireguard)
-            # WireGuard 启动逻辑 (通过 netifd 管理)
-            log "Starting WireGuard interface: $VPN_INTERFACE"
-            ifup "$VPN_INTERFACE"
-            sleep 1
-            ;;
-            
-        *)
-            log "ERROR: Unsupported VPN_TYPE: $VPN_TYPE (supported: gnb, wireguard)"
-            return 1
-            ;;
-    esac
-    
-    # === 第 2 步: 配置防火墙 NAT masq（设备存在后才能配置） ===
-    # NOTE: 防火墙架构已优化
-    #   - install 时: 创建 zone, network, forwarding, include 脚本
-    #   - start 时: 仅管理 NAT masq 规则(幂等,防止 masq 丢失)
-    #   - stop 时: 不删除 masq(保持配置)
-    #   - uninstall 时: 清理所有防火墙配置
+
+    # GNB 启动完全委托给 Lua
+    # node.start_gnb: pre-flight → spawn → 等待 TUN (5s) → 记录 gnb_es
+    log "Starting GNB (delegating to Lua)..."
+    if ! lua <<'LUA'
+local node = require("luci.model.mynet.node")
+local cfg  = require("luci.model.mynet.config")
+local nid  = cfg.get_node_id()
+if not nid then
+    io.write("[MyNet] ERROR: NODE_ID not configured in mynet.conf\n"); os.exit(1)
+end
+if node.gnb_is_running(nid) then
+    local util = require("luci.model.mynet.util")
+    io.write("[MyNet] ERROR: GNB already running (node " .. util.int_str(nid) .. ")\n")
+    os.exit(1)
+end
+local ok, err = node.start_gnb(nid)
+if not ok then
+    io.write("[MyNet] ERROR: GNB start failed: " .. (err or "unknown") .. "\n"); os.exit(1)
+end
+io.write("[MyNet] GNB process started\n")
+LUA
+    then
+        log "ERROR: GNB start failed, aborting"
+        return 1
+    fi
+
+    log "GNB started, configuring network..."
+
+    # 防火墙 NAT masq
     if [ -f "$MYNET_HOME/scripts/firewall.mynet" ]; then
-        log "Configuring firewall NAT masq for $VPN_INTERFACE..."
-        MYNET_HOME="$MYNET_HOME" sh "$MYNET_HOME/scripts/firewall.mynet" start --interface "$VPN_INTERFACE" \
-            || log "WARNING: Firewall masq configuration failed"
+        log "Configuring firewall..."
+        MYNET_HOME="$MYNET_HOME" sh "$MYNET_HOME/scripts/firewall.mynet" \
+            start --interface "$VPN_INTERFACE" \
+            || log "WARNING: Firewall configuration failed"
     else
         log "WARNING: Firewall script not found: $MYNET_HOME/scripts/firewall.mynet"
     fi
-    
-    # === 第 3 步: 配置路由（设备存在后才能配置） ===
+
+    # 路由
     if [ -f "$MYNET_HOME/scripts/route.mynet" ]; then
-        # 移除对 route.conf 存在性的检查
-        # route.mynet 会自动生成缺失的 route.conf
-        log "Configuring routes for $VPN_INTERFACE..."
-        MYNET_HOME="$MYNET_HOME" sh "$MYNET_HOME/scripts/route.mynet" start \
-            --config "$ROUTE_CONFIG" \
-            --interface "$VPN_INTERFACE" \
+        log "Configuring routes..."
+        MYNET_HOME="$MYNET_HOME" sh "$MYNET_HOME/scripts/route.mynet" \
+            start --config "$ROUTE_CONFIG" --interface "$VPN_INTERFACE" \
             || log "WARNING: Route configuration failed"
     else
         log "WARNING: Route script not found: $MYNET_HOME/scripts/route.mynet"
     fi
-    
-    # === 插件钩子: post_start ===
+
     run_plugin_hooks "post_start"
-    
-    # === 检查并启动 mynetd 守护进程 ===
-    start_mynetd_daemon
-    
     log "MyNet service started successfully"
 }
 
-# 检查并启动 mynetd 守护进程
-start_mynetd_daemon() {
-    # 检查 mynetd 二进制是否存在
-    local mynetd_bin=""
-    if [ -x "$MYNET_HOME/bin/mynetd" ]; then
-        mynetd_bin="$MYNET_HOME/bin/mynetd"
-    elif [ -x "$MYNET_HOME/mynetd" ]; then
-        mynetd_bin="$MYNET_HOME/mynetd"
-    else
-        log "INFO: mynetd binary not found, skipping daemon check"
-        return 0
-    fi
-    
-    # 检查 mynetd 是否已在运行
-    if pgrep -f "mynetd.*-d.*-c" >/dev/null 2>&1; then
-        log "INFO: mynetd daemon is already running"
-        return 0
-    fi
-    
-    log "Starting mynetd daemon..."
-    
-    # 确定配置目录路径
-    local conf_dir="$MYNET_HOME/conf"
-    if [ ! -d "$conf_dir" ]; then
-        log "WARNING: Config directory not found: $conf_dir"
-        return 1
-    fi
-    
-    # 启动 mynetd 守护进程模式
-    # 使用 & 在后台启动，因为 -d 参数会让 mynetd 自己 daemonize
-    "$mynetd_bin" -d -c "$conf_dir" &
-    local start_result=$?
-    
-    if [ $start_result -eq 0 ]; then
-        # 等待一小段时间确认启动
-        sleep 1
-        
-        # 验证进程是否成功启动
-        if pgrep -f "mynetd.*-d.*-c" >/dev/null 2>&1; then
-            log "✓ mynetd daemon started successfully"
-        else
-            log "WARNING: mynetd daemon may not have started properly"
-        fi
-    else
-        log "WARNING: Failed to start mynetd daemon (exit code: $start_result, non-fatal)"
-    fi
-}
-
-# 停止服务 (非 procd 模式使用 stop 函数)
+# ── stop ────────────────────────────────────────────────────────
 stop() {
     log "Stopping MyNet service..."
-    
-    # 加载配置
+
+    # 尝试加载配置；失败时仍通过 Lua 尽力清理
     if ! load_config; then
-        log "WARNING: Failed to load config, attempting basic cleanup..."
-        # 尝试基本清理（不依赖配置文件）
-        killall gnb 2>/dev/null || true
+        log "WARNING: Config load failed, attempting Lua-only GNB cleanup..."
+        lua -e "
+local ok1, node = pcall(require, 'luci.model.mynet.node')
+local ok2, cfg  = pcall(require, 'luci.model.mynet.config')
+if ok1 and ok2 then
+    local nid = cfg.get_node_id()
+    if nid then node.stop_gnb(nid) end
+end" 2>/dev/null
         return 0
     fi
-    
-    # === 插件钩子: stop ===
+
     run_plugin_hooks "stop"
-    
-    # === 第 1 步: 清理路由 ===
+
+    # 路由清理
     if [ -f "$MYNET_HOME/scripts/route.mynet" ]; then
         if [ -f "$ROUTE_CONFIG" ]; then
             log "Cleaning up routes..."
-            MYNET_HOME="$MYNET_HOME" sh "$MYNET_HOME/scripts/route.mynet" stop \
-                --config "$ROUTE_CONFIG" \
-                --interface "$VPN_INTERFACE"
+            MYNET_HOME="$MYNET_HOME" sh "$MYNET_HOME/scripts/route.mynet" \
+                stop --config "$ROUTE_CONFIG" --interface "$VPN_INTERFACE"
         else
             log "WARNING: Route config not found, skipping route cleanup: $ROUTE_CONFIG"
         fi
     fi
-    
-    # === 第 2 步: 清理防火墙 ===
-    # NOTE: 防火墙架构已优化
-    #   - stop 时不删除 masq 规则,保持配置
-    #   - 防火墙配置在 uninstall 时统一清理
+
+    # 防火墙清理
     if [ -f "$MYNET_HOME/scripts/firewall.mynet" ]; then
         log "Cleaning up firewall..."
         MYNET_HOME="$MYNET_HOME" sh "$MYNET_HOME/scripts/firewall.mynet" stop
     fi
-    
-    # === 第 3 步: 停止 VPN 进程 ===
-    case "$VPN_TYPE" in
-        gnb)
-            log "Stopping GNB process..."
-            
-            # 使用统一的 PID 获取方法（procd > GNB的PID文件 > pgrep）
-            local gnb_pid=$(get_running_pid)
-            local gnb_pid_file=$(get_gnb_pid_file)
-            
-            if [ -z "$gnb_pid" ]; then
-                log "No GNB process found, already stopped"
-                # 清理可能残留的 PID 文件
-                clear_gnb_pid
-                log "MyNet service stopped"
-                return 0
-            fi
-            
-            log "Found GNB process (PID: $gnb_pid), stopping..."
-            if [ -n "$gnb_pid_file" ]; then
-                log "Using GNB PID file: $gnb_pid_file"
-            fi
-            
-            # 发送 TERM 信号
-            kill -TERM "$gnb_pid" 2>/dev/null || true
-            
-            # 等待进程退出（最多 3 秒）
-            local wait_count=0
-            while [ $wait_count -lt 3 ]; do
-                if ! kill -0 "$gnb_pid" 2>/dev/null; then
-                    log "GNB process stopped successfully"
-                    # GNB 正常退出时应该会清理自己的 PID 文件
-                    # 但为了保险起见，我们也执行清理
-                    clear_gnb_pid
-                    break
-                fi
-                sleep 1
-                wait_count=$((wait_count + 1))
-            done
-            
-            # 如果还在运行，使用 SIGKILL
-            if kill -0 "$gnb_pid" 2>/dev/null; then
-                log "WARNING: GNB still running after TERM, using SIGKILL"
-                kill -KILL "$gnb_pid" 2>/dev/null || true
-                sleep 1
-                
-                # 最终验证
-                if kill -0 "$gnb_pid" 2>/dev/null; then
-                    log "ERROR: Failed to stop GNB process (PID: $gnb_pid)"
-                else
-                    log "GNB process stopped (forced)"
-                    # 强制终止后清理 PID 文件
-                    clear_gnb_pid
-                fi
-            fi
-            ;;
-            
-        wireguard)
-            # WireGuard 通过 netifd 管理
-            log "Stopping WireGuard interface: $VPN_INTERFACE"
-            ifdown "$VPN_INTERFACE"
-            ;;
-            
-        *)
-            log "ERROR: Unsupported VPN_TYPE: $VPN_TYPE (supported: gnb, wireguard)"
-            ;;
-    esac
-    
+
+    # GNB 停止完全委托给 Lua
+    # node.stop_gnb: PPID 精确匹配 gnb_es → TERM/KILL → 等待自然退出
+    log "Stopping GNB (delegating to Lua)..."
+    lua <<'LUA'
+local node = require("luci.model.mynet.node")
+local cfg  = require("luci.model.mynet.config")
+local nid  = cfg.get_node_id()
+if nid then
+    node.stop_gnb(nid)
+    io.write("[MyNet] GNB stopped\n")
+else
+    io.write("[MyNet] No GNB to stop (NODE_ID not configured)\n")
+end
+LUA
+
     log "MyNet service stopped"
 }
 
-# 重启服务
+# ── restart ─────────────────────────────────────────────────────
 restart() {
     log "Restarting MyNet service..."
     stop
@@ -652,100 +181,62 @@ restart() {
     start
 }
 
-# 状态查询
+# ── status ──────────────────────────────────────────────────────
 status() {
-    load_config
+    load_config 2>/dev/null || true
     echo "=== MyNet Status ==="
-    echo "VPN Type: $VPN_TYPE"
-    echo "Interface: $VPN_INTERFACE"
+    lua <<'LUA' 2>/dev/null
+local node = require("luci.model.mynet.node")
+local cfg  = require("luci.model.mynet.config")
+local util = require("luci.model.mynet.util")
+local nid   = cfg.get_node_id()
+local iface = cfg.get_vpn_interface()
+print(string.format("VPN Type:  gnb"))
+print(string.format("Interface: %s", iface or "?"))
+print(string.format("Node ID:   %s", nid and util.int_str(nid) or "?"))
+print("")
+if nid and node.gnb_is_running(nid) then
+    local pid_file = string.format("%s/%s/gnb.pid", util.GNB_CONF_DIR, util.int_str(nid))
+    local pid = util.trim(util.read_file(pid_file) or "")
+    print(string.format("Process:        Running  (PID: %s)", pid))
+    print("Service Status: active")
+else
+    print("Process:        Not running")
+    print("Service Status: inactive")
+end
+LUA
     echo ""
-    
-    # 使用统一的 PID 获取方法
-    local running_pid=$(get_running_pid)
-    local gnb_pid_file=$(get_gnb_pid_file)
-    
-    if [ -n "$running_pid" ]; then
-        echo "Process: Running (PID: $running_pid)"
-        
-        # 显示 GNB 的 PID 文件
-        if [ -n "$gnb_pid_file" ] && [ -f "$gnb_pid_file" ]; then
-            local file_pid=$(cat "$gnb_pid_file" 2>/dev/null | tr -d '\n\r ')
-            if [ "$file_pid" = "$running_pid" ]; then
-                echo "  PID File: $gnb_pid_file ✓"
-            else
-                echo "  PID File: $gnb_pid_file (contains: $file_pid)"
-            fi
-        else
-            echo "  PID File: ${gnb_pid_file:-N/A} (not found)"
-        fi
-        
-        # 显示完整命令行
-        if [ -f "/proc/$running_pid/cmdline" ]; then
-            echo "  CMD: $(tr '\0' ' ' < /proc/$running_pid/cmdline)"
-        fi
+    local iface="${VPN_INTERFACE:-gnb_tun}"
+    if ip link show "$iface" >/dev/null 2>&1; then
+        echo "TUN Interface: UP"
+        ip addr show "$iface" | grep "inet " | sed 's/^/  /'
     else
-        echo "Process: Not running"
+        echo "TUN Interface: DOWN (or not yet created)"
     fi
-    
-    # 检查接口状态
     echo ""
-    if ip link show "$VPN_INTERFACE" >/dev/null 2>&1; then
-        echo "Interface Status: UP"
-        ip addr show "$VPN_INTERFACE" | grep "inet " | sed 's/^/  /'
-    else
-        echo "Interface Status: DOWN"
-    fi
-    
-    # 检查路由
-    echo ""
-    echo "Routes:"
-    ip route show dev "$VPN_INTERFACE" 2>/dev/null | head -n 5 | sed 's/^/  /'
-    
-    echo ""
-    # 检查服务是否运行
-    local pid=$(get_running_pid)
-    if [ -n "$pid" ] || ip link show "$VPN_INTERFACE" >/dev/null 2>&1; then
-        echo "Service Status: active"
-    else
-        echo "Service Status: inactive"
-    fi
+    echo "Routes (dev $iface):"
+    ip route show dev "$iface" 2>/dev/null | head -n 5 | sed 's/^/  /' || echo "  (none)"
 }
 
-# 安装服务
-# 注意：此函数仅用于初始化，不应覆盖已存在的配置文件
+# ── install ─────────────────────────────────────────────────────
 install() {
     log "Installing MyNet service..."
-    
-    # 创建必要的目录
-    mkdir -p "$MYNET_HOME/conf" "$MYNET_HOME/scripts" "$MYNET_HOME/var/logs" "$MYNET_HOME/var/run"
-    
-    # 仅在配置文件不存在时创建默认配置（兜底机制）
+    mkdir -p "$MYNET_HOME/conf" "$MYNET_HOME/scripts" \
+             "$MYNET_HOME/var/logs" "$MYNET_HOME/var/run"
     if [ ! -f "$CONFIG_FILE" ]; then
-        log "WARN: Config file not found, creating default config: $CONFIG_FILE"
-        log "NOTE: You should regenerate this config using TUI with correct node settings"
-        cat > "$CONFIG_FILE" << 'EOF'
-# MyNet Default Configuration (Please regenerate using TUI)
-# Generated by: /etc/init.d/mynet install
-# To regenerate: cd /etc/mynet && ./bin/mynet
-
+        log "WARN: Config not found, creating default: $CONFIG_FILE"
+        cat > "$CONFIG_FILE" << 'CONF'
+# MyNet Configuration — regenerate via LuCI → Services → MyNet
 VPN_TYPE="gnb"
 VPN_INTERFACE="gnb_tun"
 VPN_BINARY="/etc/mynet/driver/gnb/bin/gnb"
 VPN_CONFIG="/etc/mynet/driver/gnb/conf"
 ROUTER_MODE="auto"
 ROUTE_CONFIG="/etc/mynet/conf/route.conf"
-EOF
+CONF
         chmod 644 "$CONFIG_FILE"
-    else
-        log "Config file already exists: $CONFIG_FILE"
     fi
-    
-    # 启用服务自启动
     chmod +x /etc/init.d/mynet
     /etc/init.d/mynet enable
-    
-    log "Service installed successfully"
-    log "Config file: $CONFIG_FILE"
-    log "Start service: /etc/init.d/mynet start"
-    return 0
+    log "Service installed. Start: /etc/init.d/mynet start"
 }

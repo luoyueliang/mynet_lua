@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.0.2 (2026-04-19)
+
+### Improvements
+- **rc.mynet 精简重构** — 从 737 行精简至 243 行（-67%）。GNB 进程管理（pre-flight/spawn/gnb_es 清理）完全委托给 `luci.model.mynet.node`，shell 仅保留配置加载、route/firewall 脚本调用和插件钩子
+- **gnb_es PPID 精确清理** — stop_gnb 改用 PPID 匹配（/proc/{pid}/stat 字段 4）定位 gnb 的 gnb_es 子进程，避免错误 kill 其他 GNB 实例的 gnb_es；二进制路径匹配作为兜底
+- **T7 智能提前结束** — E2E 测试中等待 P2P 连通性改为每 5s 探测对端 IP，任一对端 ping 通即提前结束，最长等待 120s
+
+### Fixes
+- proxy.sh base_url 路径修正（`/d/plugins/mp`）
+- nftables inet 表 dnat 添加 ip 地址族限定词，修复地址族不匹配错误
+
 ## v2.0.0 (2026-04-06)
 
 ### Features

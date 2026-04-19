@@ -580,6 +580,117 @@ function M.submit_heartbeat(node_id)
 end
 
 -- ─────────────────────────────────────────────────────────────
+-- Daemon 心跳（对齐 Go mynetd，POST /monitor/heartbeat）
+-- 认证：节点公钥 HMAC-SHA256，无 JWT token，永不过期
+-- 可从 cron 命令行调用：lua -e 'require("luci.model.mynet.system").run_daemon_heartbeat()'
+-- 返回: (true, nil) 或 (nil, error_string)
+-- ─────────────────────────────────────────────────────────────
+function M.run_daemon_heartbeat()
+    local cfg_m = require("luci.model.mynet.config")
+
+    -- 读取 NODE_ID
+    local node_id = cfg_m.get_node_id()
+    if not node_id or node_id == 0 then
+        return nil, "NODE_ID not configured"
+    end
+    local nid_str = util.int_str(node_id)
+
+    -- 读取公钥（32 字节 = 64 hex，HMAC key）
+    local pub_path = string.format("%s/%s/security/%s.public",
+        util.GNB_CONF_DIR, nid_str, nid_str)
+    local pub_hex = util.trim(util.read_file(pub_path) or "")
+    if pub_hex == "" then
+        return nil, "public key not found: " .. pub_path
+    end
+    if #pub_hex ~= 64 then
+        return nil, string.format("public key length wrong (%d chars, expected 64)", #pub_hex)
+    end
+
+    -- 内联最小采集（不依赖 node.lua，避免在 cron CLI 上下文加载全量模块链）
+    local ts = os.time()
+
+    -- 内存使用率（/proc/meminfo）
+    local mem_pct = 0
+    local meminfo = util.read_file("/proc/meminfo") or ""
+    local mem_total = tonumber(meminfo:match("MemTotal:%s*(%d+)"))    or 0
+    local mem_avail = tonumber(meminfo:match("MemAvailable:%s*(%d+)")) or 0
+    if mem_total > 0 then
+        mem_pct = ((mem_total - mem_avail) / mem_total) * 100
+    end
+
+    -- VPN 接口信息
+    local iface = cfg_m.get_vpn_interface()
+    local vpn_status = "down"
+    local vpn_ip     = ""
+    local chk = util.exec("ip link show '" .. iface .. "' 2>/dev/null | head -1")
+    if chk and chk ~= "" then
+        vpn_status = "up"
+        local ip_out = util.exec("ip -4 addr show '" .. iface .. "' 2>/dev/null")
+        if ip_out then
+            vpn_ip = ip_out:match("inet%s+([%d%.]+)") or ""
+        end
+    end
+
+    -- 对端数（gnb_ctl map，失败则为 0）
+    local peer_count = 0
+    local gnb_ctl  = util.GNB_DRIVER_ROOT .. "/bin/gnb_ctl"
+    local gnb_map  = util.GNB_CONF_DIR .. "/" .. nid_str .. "/gnb.map"
+    if util.file_exists(gnb_ctl) and util.file_exists(gnb_map) then
+        local out = util.exec(
+            "cd '" .. util.GNB_DRIVER_ROOT
+            .. "' && ./bin/gnb_ctl -s -b 'conf/" .. nid_str
+            .. "/gnb.map' 2>/dev/null | grep -c '^node '") or "0"
+        peer_count = tonumber(util.trim(out)) or 0
+    end
+    local vpn_json = string.format(
+        '{"type":"gnb","ifname":"%s","status":"%s","ip":"%s"}',
+        iface, vpn_status, vpn_ip)
+    local body = string.format(
+        '{"connection_count":%d,"cpu_usage":0,"disk_usage":0,"memory_usage":%.6f,"node_id":%s,"timestamp":%d,"vpn_interface":%s}',
+        peer_count, mem_pct, nid_str, ts, vpn_json)
+
+    -- HMAC-SHA256 签名（与 Go: h := hmac.New(sha256.New, publicKey)）
+    local sign_path = "/api/v1/monitor/heartbeat"
+    local sign_msg  = string.format("POST|%s|%d|%s", sign_path, ts, body)
+    local sig_hex   = util.hmac_sha256(pub_hex, sign_msg)
+    if not sig_hex then
+        return nil, "HMAC signing failed"
+    end
+    local sig_b64 = util.hex_to_base64(sig_hex)
+    if not sig_b64 then
+        return nil, "base64 encode failed"
+    end
+
+    -- POST（无 Authorization，只有 X-Node-* 头；直接调 curl 不经 api 模块）
+    -- heartbeat 端点固定在 /api/v1/；get_api_url() 可能返回 /api/v2 版本前缀，
+    -- 因此只取 scheme+host，路径硬编码。
+    local api_base = cfg_m.get_api_url():match("^(https?://[^/]+)") or "https://api.mynet.club"
+    local full_url = (api_base .. "/api/v1/monitor/heartbeat"):gsub("'", "'\\''")
+    local safe_body = body:gsub("'", "'\\''")
+    local cmd = string.format(
+        "curl -s -m 25 -X POST"
+        .. " -H 'Content-Type: application/json'"
+        .. " -H 'X-Node-Id: %s'"
+        .. " -H 'X-Timestamp: %d'"
+        .. " -H 'X-Node-Signature: %s'"
+        .. " --data '%s'"
+        .. " -w '\\n__STATUS:%%{http_code}'"
+        .. " '%s' 2>/dev/null",
+        nid_str, ts, sig_b64, safe_body, full_url)
+    local raw = util.exec(cmd)
+    if not raw then return nil, "curl execution failed" end
+    local status = tonumber(raw:match("__STATUS:(%d+)") or "0")
+    local resp   = raw:gsub("\n?__STATUS:%d+%s*$", "")
+    if status ~= 200 then
+        return nil, string.format("HTTP %d: %s", status, resp:sub(1, 200))
+    end
+    if resp:find('"success":false') then
+        return nil, "server rejected: " .. resp:sub(1, 200)
+    end
+    return true, nil
+end
+
+-- ─────────────────────────────────────────────────────────────
 -- 健康检查聚合（Dashboard 用）
 -- 返回 issues 数组: { level, title, detail, action_label, action_api }
 -- level: "error" | "warn" | "ok"

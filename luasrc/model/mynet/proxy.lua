@@ -116,8 +116,10 @@ function M.get_status()
     -- 检测 nftables set
     if not running then
         local nft_out = util.trim(util.exec(
-            "nft list set inet mynet_proxy mynet_proxy 2>/dev/null | grep 'elements' | wc -l") or "")
-        if tonumber(nft_out) and tonumber(nft_out) > 0 then
+            "nft list set inet mynet_proxy mynet_proxy 2>/dev/null | tr ',' '\n' | grep -c '[0-9]'") or "")
+        local nft_cnt = tonumber(nft_out) or 0
+        if nft_cnt > 0 then
+            ipset_count = nft_cnt
             running = true
         end
     end
@@ -459,7 +461,7 @@ end
 -- Route Inject — 向 GNB route.conf 注入 proxy peer 的 /8 路由
 -- GNB daemon 需要 route.conf 声明才会转发对应网段的流量（数据层放行）
 -- 注入使用 GNB pipe 格式: peer_nid|network|netmask
--- OS 层路由由 route_policy.sh 独立路由表 + fwmark 处理，此处不触发 sync_top_route_conf
+-- OS 层路由由 route_policy.sh 独立路由表 + fwmark 处理，此处不触发 generate_network_conf
 -- ─────────────────────────────────────────────────────────────
 
 -- Marker（与 scripts/proxy/hooks/stop.sh 统一）
@@ -547,7 +549,7 @@ function M.route_inject()
     end
     lines[#lines + 1] = M.INJECT_MARKER_END
 
-    -- 追加到 route.conf（不触发 sync_top_route_conf）
+    -- 追加到 route.conf（不触发 generate_network_conf）
     util.write_file(route_conf, clean .. table.concat(lines, "\n") .. "\n")
 
     util.log_info("route_inject: injected " .. total .. " pipe routes for node " .. nid_str)

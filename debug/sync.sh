@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 PKG_NAME="luci-app-mynet"
-PKG_VERSION="1.0.0"
+PKG_VERSION="2.0.2"
 PKG_RELEASE="1"
 BUILD_DIR="$PROJECT_DIR/build"
 IPK_FILE="$BUILD_DIR/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_all.ipk"
@@ -98,6 +98,11 @@ build_ipk() {
     install -m 0755 "$PROJECT_DIR/root/usr/sbin/mynet-fix-curl" \
         "$data_dir/usr/sbin/"
 
+    # --- heartbeat cron script (替代 mynetd) ---
+    install -d "$data_dir/usr/bin"
+    install -m 0755 "$PROJECT_DIR/scripts/shell/heartbeat.sh" \
+        "$data_dir/usr/bin/mynet-heartbeat"
+
     # --- Deploy route.mynet / firewall.mynet to scripts/ (fixed path) ---
     install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/runtime/route.mynet" \
         "$data_dir/etc/mynet/scripts/"
@@ -139,6 +144,8 @@ EOF
 [ -n "${IPKG_INSTROOT}" ] && exit 0
 # Clean up legacy _src directory from older versions
 rm -rf /etc/mynet/scripts/_src
+# Stop and disable Go mynetd (replaced by cron heartbeat)
+pkill -x mynetd 2>/dev/null || true
 # Enable and load tun module
 modprobe tun 2>/dev/null
 # Install firewall zone (creates network.mynet + zone + forwarding, no device binding yet)
@@ -147,6 +154,12 @@ MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/firewall.mynet install 2>/dev/null
 rm -rf /tmp/luci-*
 # Enable mynet service (don't start — user needs to configure first)
 /etc/init.d/mynet enable 2>/dev/null
+# Setup heartbeat cron (every 5 minutes, replaces mynetd)
+mkdir -p /etc/crontabs
+if ! grep -q 'mynet-heartbeat' /etc/crontabs/root 2>/dev/null; then
+    echo '*/5 * * * * /usr/bin/mynet-heartbeat' >> /etc/crontabs/root
+fi
+/etc/init.d/cron reload 2>/dev/null || true
 exit 0
 POSTINST
     chmod +x "$ctrl_dir/postinst"
@@ -156,6 +169,11 @@ POSTINST
 [ -n "${IPKG_INSTROOT}" ] && exit 0
 /etc/init.d/mynet stop 2>/dev/null
 /etc/init.d/mynet disable 2>/dev/null
+# Remove heartbeat cron entry
+if [ -f /etc/crontabs/root ]; then
+    sed -i '/mynet-heartbeat/d' /etc/crontabs/root
+    /etc/init.d/cron reload 2>/dev/null || true
+fi
 exit 0
 PRERM
     chmod +x "$ctrl_dir/prerm"

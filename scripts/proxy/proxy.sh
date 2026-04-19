@@ -392,7 +392,8 @@ status_json() {
             ;;
         nftables)
             if nft list set inet mynet_proxy mynet_proxy >/dev/null 2>&1; then
-                ipset_count=$(nft list set inet mynet_proxy mynet_proxy 2>/dev/null | grep -c "elements")
+                # 统计实际 IP 规则数（逗号分隔的元素）
+                ipset_count=$(nft list set inet mynet_proxy mynet_proxy 2>/dev/null | tr ',' '\n' | grep -c '[0-9]')
                 running=true
                 layer_policy_routing=true
             fi

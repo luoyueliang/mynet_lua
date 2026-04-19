@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-mynet
-PKG_VERSION:=2.0.0
+PKG_VERSION:=2.0.2
 PKG_RELEASE:=1
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
@@ -75,6 +75,10 @@ define Package/luci-app-mynet/install
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) ./root/usr/sbin/mynet-fix-curl $(1)/usr/sbin/
 
+	# --- heartbeat cron script (替代 mynetd) ---
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) ./scripts/shell/heartbeat.sh $(1)/usr/bin/mynet-heartbeat
+
 	# --- Deploy route.mynet / firewall.mynet to scripts/ (fixed path) ---
 	$(INSTALL_DIR) $(1)/etc/mynet/scripts
 	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/route.mynet \
@@ -100,14 +104,22 @@ define Package/luci-app-mynet/postinst
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
 # Clean up legacy _src directory from older versions
 rm -rf /etc/mynet/scripts/_src
+# Stop and disable Go mynetd (replaced by cron heartbeat)
+pkill -x mynetd 2>/dev/null || true
 # Enable and load tun module
 modprobe tun 2>/dev/null
-# Install firewall zone (creates network.mynet + zone + forwarding, no device binding yet)
+# Install firewall zone
 MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/firewall.mynet install 2>/dev/null
 # Clear LuCI cache
 rm -rf /tmp/luci-*
-# Enable mynet service (don't start — user needs to configure first)
+# Enable mynet service
 /etc/init.d/mynet enable 2>/dev/null
+# Setup heartbeat cron (every 5 minutes, replaces mynetd)
+mkdir -p /etc/crontabs
+if ! grep -q 'mynet-heartbeat' /etc/crontabs/root 2>/dev/null; then
+    echo '*/5 * * * * /usr/bin/mynet-heartbeat' >> /etc/crontabs/root
+fi
+/etc/init.d/cron reload 2>/dev/null || true
 exit 0
 endef
 
@@ -116,6 +128,11 @@ define Package/luci-app-mynet/prerm
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
 /etc/init.d/mynet stop 2>/dev/null
 /etc/init.d/mynet disable 2>/dev/null
+# Remove heartbeat cron entry
+if [ -f /etc/crontabs/root ]; then
+    sed -i '/mynet-heartbeat/d' /etc/crontabs/root
+    /etc/init.d/cron reload 2>/dev/null || true
+fi
 exit 0
 endef
 

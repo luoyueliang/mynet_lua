@@ -369,33 +369,104 @@ function M.rotate_logs(max_size, max_files)
 end
 
 -- ─────────────────────────────────────────────────────────────
--- HMAC-SHA256 签名（对齐 client heartbeat/signer.js）
--- 使用 OpenSSL CLI：echo -n "data" | openssl dgst -sha256 -hmac "key"
+-- HMAC-SHA256 签名（纯 Lua XOR + sha256sum，无需 openssl CLI）
+-- key_hex: 私钥 hex 字符串（128 chars = 64 bytes）
+-- data: 待签名字符串
 -- 返回: hex 签名字符串 或 nil
 -- ─────────────────────────────────────────────────────────────
-function M.hmac_sha256(key, data)
-    if not key or key == "" or not data then return nil end
-    -- 通过 stdin 传递数据，避免命令行长度限制和注入
-    local tmp = os.tmpname()
-    local f = io.open(tmp, "w")
-    if not f then return nil end
-    f:write(data)
-    f:close()
-    -- key 需要安全传递（通过 hex:key 避免 shell 注入）
-    local safe_key = key:gsub("'", "'\\''")
-    local cmd = "openssl dgst -sha256 -hmac '" .. safe_key .. "' '" .. tmp .. "' 2>/dev/null"
-    local out = M.exec(cmd)
-    os.remove(tmp)
-    if not out then return nil end
-    -- 输出格式: "HMAC-SHA256(file)= abcdef..." 或 "(stdin)= abcdef..."
-    local hex = out:match("=%s*([0-9a-fA-F]+)")
-    return hex
+function M.hmac_sha256(key_hex, data)
+    if not key_hex or key_hex == "" or not data then return nil end
+
+    -- 纯 Lua 字节 XOR（Lua 5.1 兼容，不依赖 bit 库）
+    local function xor_byte(a, b)
+        local r, v = 0, 1
+        for _ = 1, 8 do
+            if (a % 2) ~= (b % 2) then r = r + v end
+            a = math.floor(a / 2)
+            b = math.floor(b / 2)
+            v = v * 2
+        end
+        return r
+    end
+
+    -- hex 字符串 → 二进制字符串
+    local function hex2bin(hex)
+        return (hex:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end))
+    end
+
+    -- 对临时文件执行 sha256sum，返回 64 字符 hex
+    local function sha256_file(path)
+        local out = M.exec("sha256sum '" .. path .. "' 2>/dev/null")
+        return out and out:match("^(%x+)")
+    end
+
+    local BLOCK = 64  -- HMAC block size = 64 bytes
+    local key_bin = hex2bin(key_hex)
+
+    -- key > BLOCK 时对 key 取 hash（128-hex 私钥 = 64 bytes = 恰好等于 BLOCK，不会触发）
+    if #key_bin > BLOCK then
+        local t = os.tmpname()
+        local f = io.open(t, "wb")
+        if not f then return nil end
+        f:write(key_bin); f:close()
+        local h = sha256_file(t); os.remove(t)
+        if not h then return nil end
+        key_bin = hex2bin(h)
+    end
+
+    -- 用零填充到 BLOCK 字节
+    while #key_bin < BLOCK do key_bin = key_bin .. "\0" end
+
+    -- 生成 ipad_bin（key XOR 0x36）和 opad_bin（key XOR 0x5c）
+    local ipad_t, opad_t = {}, {}
+    for i = 1, BLOCK do
+        local b = key_bin:byte(i)
+        ipad_t[i] = string.char(xor_byte(b, 0x36))
+        opad_t[i] = string.char(xor_byte(b, 0x5c))
+    end
+    local ipad_bin = table.concat(ipad_t)
+    local opad_bin = table.concat(opad_t)
+
+    -- inner = SHA256(ipad_bin || data)
+    local t1 = os.tmpname()
+    local f1 = io.open(t1, "wb")
+    if not f1 then return nil end
+    f1:write(ipad_bin); f1:write(data); f1:close()
+    local inner_hex = sha256_file(t1)
+    os.remove(t1)
+    if not inner_hex then return nil end
+
+    -- outer = SHA256(opad_bin || inner_bin)
+    local t2 = os.tmpname()
+    local f2 = io.open(t2, "wb")
+    if not f2 then return nil end
+    f2:write(opad_bin); f2:write(hex2bin(inner_hex)); f2:close()
+    local result = sha256_file(t2)
+    os.remove(t2)
+    return result
 end
 
 -- 生成 heartbeat 签名（node_id + timestamp + metrics_json）
 function M.sign_heartbeat(node_id_str, timestamp, metrics_json, priv_key_hex)
     local payload = node_id_str .. ":" .. timestamp .. ":" .. metrics_json
     return M.hmac_sha256(priv_key_hex, payload)
+end
+
+-- hex 字符串 → base64 字符串（用于 X-Node-Signature 请求头）
+-- 通过 tmpfile + base64 命令实现，无需额外依赖
+function M.hex_to_base64(hex_str)
+    if not hex_str or hex_str == "" then return nil end
+    local tmp = os.tmpname()
+    local f = io.open(tmp, "wb")
+    if not f then return nil end
+    -- hex → binary
+    hex_str:gsub("%x%x", function(h)
+        f:write(string.char(tonumber(h, 16)))
+    end)
+    f:close()
+    local b64 = M.exec("base64 < '" .. tmp .. "' | tr -d '\n'")
+    os.remove(tmp)
+    return b64 and M.trim(b64) or nil
 end
 
 return M
