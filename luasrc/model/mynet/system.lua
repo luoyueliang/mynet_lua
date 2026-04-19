@@ -453,6 +453,46 @@ function M.parse_gnb_nodes(output)
 end
 
 -- ─────────────────────────────────────────────────────────────
+-- 处理心跳响应中的服务端下发命令
+-- commands: [{ id, action, params }]
+-- action 类型: config.refresh / service.restart / gnb.restart /
+--              gnb.start / gnb.stop / route.refresh / client.report
+-- ─────────────────────────────────────────────────────────────
+function M._handle_heartbeat_commands(commands, node_id)
+    if type(commands) ~= "table" or #commands == 0 then return end
+    for _, cmd in ipairs(commands) do
+        local action = cmd.action or ""
+        util.log_info("heartbeat", "server command: " .. action
+            .. (cmd.params and cmd.params.reason and (" reason=" .. cmd.params.reason) or ""))
+
+        if action == "config.refresh" then
+            local node_m = require("luci.model.mynet.node")
+            node_m.refresh_configs_bundle(node_id)
+        elseif action == "service.restart" then
+            local node_m = require("luci.model.mynet.node")
+            node_m.restart_vpn()
+        elseif action == "gnb.restart" then
+            local node_m = require("luci.model.mynet.node")
+            node_m.restart_gnb(node_id)
+        elseif action == "gnb.start" then
+            local node_m = require("luci.model.mynet.node")
+            node_m.start_gnb(node_id)
+        elseif action == "gnb.stop" then
+            local node_m = require("luci.model.mynet.node")
+            node_m.stop_gnb(node_id)
+        elseif action == "route.refresh" then
+            local node_m = require("luci.model.mynet.node")
+            node_m.refresh_single_config(node_id, "route")
+        elseif action == "client.report" then
+            -- 立即再上报一次（避免递归：仅日志记录，不再次调用）
+            util.log_info("heartbeat", "client.report requested, will report on next cycle")
+        else
+            util.log_warn("heartbeat: unknown command action: " .. action)
+        end
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────
 -- Heartbeat 指标采集（对齐 client heartbeat metrics）
 -- 返回: { cpu_percent, memory_used, memory_total, disk_used,
 --         disk_total, uptime, vpn_status, peer_count,
@@ -532,55 +572,87 @@ function M.collect_metrics(node_id)
 end
 
 -- ─────────────────────────────────────────────────────────────
--- 提交 heartbeat 到服务端（PATCH /nodes/{id}/heartbeat）
--- 对齐 client heartbeat 插件的上报格式
--- 返回: (true, nil) 或 (nil, error_string)
+-- 提交 heartbeat 到服务端（POST /api/v2/monitor/heartbeat）
+-- 使用 HMAC-SHA256 Node-Sig 认证（与 daemon 一致）
+-- 返回: (response_table, nil) 或 (nil, error_string)
 -- ─────────────────────────────────────────────────────────────
 function M.submit_heartbeat(node_id)
-    local auth_m = require("luci.model.mynet.auth")
     local cfg_m  = require("luci.model.mynet.config")
     local api_m  = require("luci.model.mynet.api")
     local node_m = require("luci.model.mynet.node")
 
-    local current, err = auth_m.ensure_valid()
-    if err then return nil, "auth: " .. err end
-
-    local zone = cfg_m.load_current_zone()
-    local zone_id = zone and zone.zone_id or "0"
     local nid_str = util.int_str(node_id)
+    local ts = os.time()
 
-    local metrics = M.collect_metrics(node_id)
-    local timestamp = util.format_time(util.time_now())
-    local metrics_json = util.json_encode(metrics) or "{}"
-
-    -- HMAC 签名（使用私钥 hex 作为 HMAC key）
-    local priv_path = string.format("%s/%s/security/%s.private",
+    -- 读取公钥用于 HMAC 签名
+    local pub_path = string.format("%s/%s/security/%s.public",
         util.GNB_CONF_DIR, nid_str, nid_str)
-    local priv_hex = util.trim(util.read_file(priv_path) or "")
-    local signature = ""
-    if priv_hex ~= "" then
-        signature = util.sign_heartbeat(nid_str, timestamp, metrics_json, priv_hex) or ""
+    local pub_hex = util.trim(util.read_file(pub_path) or "")
+    if pub_hex == "" then
+        return nil, "public key not found: " .. pub_path
     end
 
+    local metrics = M.collect_metrics(node_id)
+
+    -- v2 body: status + uptime + vpn_interfaces（复数数组）
+    local iface = cfg_m.get_vpn_interface()
+    -- 后端验证要求 status 为 "up"/"down"，而非 "running"/"stopped"
+    local iface_status = (metrics.vpn_status == "running") and "up" or "down"
+    local vpn_iface_entry = {
+        type   = "gnb",
+        ifname = iface,
+        status = iface_status,
+        ip     = "",
+    }
+    -- 获取 VPN IP
+    local ip_out = util.exec("ip -4 addr show '" .. iface .. "' 2>/dev/null")
+    if ip_out then
+        vpn_iface_entry.ip = ip_out:match("inet%s+([%d%.]+)") or ""
+    end
+
+    local node_status = (metrics.vpn_status == "running") and "online" or "offline"
     local payload = {
-        node_id   = nid_str,
-        timestamp = timestamp,
-        metrics   = metrics,
-        signature = signature,
+        status          = node_status,
+        uptime          = metrics.uptime or 0,
+        connection_count = metrics.peer_count or 0,
+        cpu_usage       = metrics.cpu_percent or 0,
+        memory_usage    = metrics.memory_used and metrics.memory_total and metrics.memory_total > 0
+                          and ((metrics.memory_used / metrics.memory_total) * 100) or 0,
+        disk_usage      = metrics.disk_used and metrics.disk_total and metrics.disk_total > 0
+                          and ((metrics.disk_used / metrics.disk_total) * 100) or 0,
+        node_id         = nid_str,
+        timestamp       = ts,
+        vpn_interfaces  = { vpn_iface_entry },
     }
 
-    local endpoint = string.format("/nodes/%s/heartbeat", nid_str)
-    local data, api_err = api_m.patch_json(
-        cfg_m.get_api_url(), endpoint, payload, current.token, zone_id)
+    local body_json = util.json_encode(payload) or "{}"
+
+    -- HMAC-SHA256 签名
+    local sign_path = "/api/v2/monitor/heartbeat"
+    local sign_msg  = string.format("POST|%s|%d|%s", sign_path, ts, body_json)
+    local sig_hex   = util.hmac_sha256(pub_hex, sign_msg)
+    if not sig_hex then
+        return nil, "HMAC signing failed"
+    end
+    local signature = util.hex_to_base64(sig_hex) or ""
+
+    local data, api_err = api_m.post_heartbeat(
+        cfg_m.get_api_url(), nid_str, ts, body_json, signature)
     if api_err then return nil, api_err end
     if data and data.success == false then
         return nil, data.message or "heartbeat rejected"
     end
-    return true, nil
+
+    -- 处理服务端下发命令
+    if data and data.commands then
+        M._handle_heartbeat_commands(data.commands, node_id)
+    end
+
+    return data, nil
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Daemon 心跳（对齐 Go mynetd，POST /monitor/heartbeat）
+-- Daemon 心跳（POST /api/v2/monitor/heartbeat）
 -- 认证：节点公钥 HMAC-SHA256，无 JWT token，永不过期
 -- 可从 cron 命令行调用：lua -e 'require("luci.model.mynet.system").run_daemon_heartbeat()'
 -- 返回: (true, nil) 或 (nil, error_string)
@@ -608,6 +680,10 @@ function M.run_daemon_heartbeat()
 
     -- 内联最小采集（不依赖 node.lua，避免在 cron CLI 上下文加载全量模块链）
     local ts = os.time()
+
+    -- Uptime
+    local uptime_raw = util.trim(util.read_file("/proc/uptime") or "")
+    local uptime = math.floor(tonumber(uptime_raw:match("^([%d%.]+)")) or 0)
 
     -- 内存使用率（/proc/meminfo）
     local mem_pct = 0
@@ -642,15 +718,18 @@ function M.run_daemon_heartbeat()
             .. "/gnb.map' 2>/dev/null | grep -c '^node '") or "0"
         peer_count = tonumber(util.trim(out)) or 0
     end
+
+    -- v2 body 格式：status + uptime + vpn_interfaces（复数数组）
     local vpn_json = string.format(
         '{"type":"gnb","ifname":"%s","status":"%s","ip":"%s"}',
         iface, vpn_status, vpn_ip)
+    local node_status = (vpn_status == "up") and "online" or "offline"
     local body = string.format(
-        '{"connection_count":%d,"cpu_usage":0,"disk_usage":0,"memory_usage":%.6f,"node_id":%s,"timestamp":%d,"vpn_interface":%s}',
-        peer_count, mem_pct, nid_str, ts, vpn_json)
+        '{"status":"%s","uptime":%d,"connection_count":%d,"cpu_usage":0,"disk_usage":0,"memory_usage":%.6f,"node_id":%s,"timestamp":%d,"vpn_interfaces":[%s]}',
+        node_status, uptime, peer_count, mem_pct, nid_str, ts, vpn_json)
 
     -- HMAC-SHA256 签名（与 Go: h := hmac.New(sha256.New, publicKey)）
-    local sign_path = "/api/v1/monitor/heartbeat"
+    local sign_path = "/api/v2/monitor/heartbeat"
     local sign_msg  = string.format("POST|%s|%d|%s", sign_path, ts, body)
     local sig_hex   = util.hmac_sha256(pub_hex, sign_msg)
     if not sig_hex then
@@ -662,10 +741,8 @@ function M.run_daemon_heartbeat()
     end
 
     -- POST（无 Authorization，只有 X-Node-* 头；直接调 curl 不经 api 模块）
-    -- heartbeat 端点固定在 /api/v1/；get_api_url() 可能返回 /api/v2 版本前缀，
-    -- 因此只取 scheme+host，路径硬编码。
     local api_base = cfg_m.get_api_url():match("^(https?://[^/]+)") or "https://api.mynet.club"
-    local full_url = (api_base .. "/api/v1/monitor/heartbeat"):gsub("'", "'\\''")
+    local full_url = (api_base .. "/api/v2/monitor/heartbeat"):gsub("'", "'\\''")
     local safe_body = body:gsub("'", "'\\''")
     local cmd = string.format(
         "curl -s -m 25 -X POST"
@@ -687,6 +764,13 @@ function M.run_daemon_heartbeat()
     if resp:find('"success":false') then
         return nil, "server rejected: " .. resp:sub(1, 200)
     end
+
+    -- 处理服务端下发命令（config.refresh / service.restart 等）
+    local resp_data = util.json_decode(resp)
+    if resp_data and resp_data.commands then
+        M._handle_heartbeat_commands(resp_data.commands, node_id)
+    end
+
     return true, nil
 end
 
