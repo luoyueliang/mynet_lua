@@ -9,3 +9,4 @@
 # Exclude local credential file from root/ overlay
 /root/etc/mynet/conf/credential.json
 /root/etc/mynet/conf/zone.json
+root@192.168.4.1

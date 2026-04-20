@@ -103,6 +103,7 @@ end
 -- ─────────────────────────────────────────────────────────────
 -- 获取渲染后的服务地址索引（text/plain）
 -- 对应 Go: GET /zones/services/indexes?render_conf=1
+-- zone_id 通过 X-Zone-ID 请求头传递（由 auth_headers 注入）
 -- ─────────────────────────────────────────────────────────────
 function M.get_services_index()
     local current, zone_id, err = auth_context()
@@ -756,6 +757,11 @@ function M.refresh_single_config(node_id, config_type)
                 local addr_path = resolve_local_config_path(node_id, "address")
                 return { ok = false, file = addr_path, error = err }
             end
+        end
+        if not text or text == "" then
+            local addr_path = resolve_local_config_path(node_id, "address")
+            return { ok = false, file = addr_path,
+                     error = "API returned empty content (zone may have no index servers configured)" }
         end
         local ok, we, addr_path = M.write_local_config(node_id, "address", text)
         return { ok = ok, file = addr_path, error = we }

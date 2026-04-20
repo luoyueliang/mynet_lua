@@ -134,6 +134,9 @@ function M.get_text(base_url, endpoint, token, zone_id)
     local body, status, err = do_curl("GET", url, nil, auth_headers(token, zone_id), "text/plain")
     if err then return nil, err end
     if status == 0 then return nil, "connection failed" end
+    if status >= 300 and status < 400 then
+        return nil, string.format("unexpected redirect %d (token expired?)", status)
+    end
     if status >= 400 then
         return nil, string.format("api error %d", status)
     end
@@ -159,7 +162,18 @@ function M.get_config_bundle(base_url, node_id_str, token, zone_id)
     local body, status, err = do_curl("GET", url, nil, auth_headers(token, zone_id))
     if err then return nil, err end
     if status == 0 then return nil, "connection failed" end
-    if status == 404 then return nil, "not_supported" end
+    if status >= 300 and status < 400 then
+        return nil, string.format("unexpected redirect %d (token expired?)", status)
+    end
+    if status == 404 then
+        -- 区分“后端不支持 bundle API”与“节点未找到”
+        local data = util.json_decode(body)
+        local msg = data and data.message or ""
+        if msg:lower():find("not found") then
+            return nil, "node not found (404): " .. msg
+        end
+        return nil, "not_supported"
+    end
     if status >= 400 then
         return nil, string.format("api error %d", status)
     end

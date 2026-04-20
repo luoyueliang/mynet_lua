@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.1.3 (2026-04-20)
+
+### Bug Fixes
+- **api.lua: 3xx 重定向穿透** — `get_text()` 和 `get_config_bundle()` 新增 HTTP 3xx 检测，token 过期 302 跳转不再被当作成功响应写入配置文件
+- **api.lua: config-bundle 404 区分** — 明确区分"后端不支持 bundle API"与"节点未找到"（后者给出明确错误提示而非静默 fallback）
+- **node.lua: address.conf 空内容保护** — `refresh_single_config("address")` 收到空响应时返回错误而非写入空文件
+
 ## v2.1.2 (2026-04-20)
 
 ### Features
