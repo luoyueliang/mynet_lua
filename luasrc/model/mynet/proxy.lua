@@ -458,22 +458,50 @@ function M.diagnose_ip(ip)
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Route Inject — 向 GNB route.conf 注入 proxy peer 的 /8 路由
+-- Route Inject — 向 GNB route.conf 注入代理放行路由
 -- GNB daemon 需要 route.conf 声明才会转发对应网段的流量（数据层放行）
--- 注入使用 GNB pipe 格式: peer_nid|network|netmask
+-- 注入使用 GNB pipe 格式: node_id|network|netmask
+-- client/both: 为 proxy_peers 注入出口路由
+-- server/both: 为自身节点注入放行路由（告知 GNB 自身处理这些网段的转发）
 -- OS 层路由由 route_policy.sh 独立路由表 + fwmark 处理，此处不触发 generate_network_conf
 -- ─────────────────────────────────────────────────────────────
 
 -- Marker（与 scripts/proxy/hooks/stop.sh 统一）
-M.INJECT_MARKER_BEGIN = "#----proxy start----"
-M.INJECT_MARKER_END   = "#----proxy end----"
+M.INJECT_MARKER_BEGIN        = "#----proxy start----"
+M.INJECT_MARKER_END          = "#----proxy end----"
+-- Server-mode 自身放行 marker
+M.SERVER_MARKER_BEGIN        = "#----proxy-server start----"
+M.SERVER_MARKER_END          = "#----proxy-server end----"
 
--- 保留的 /8 段不注入（0, 10, 127, 172, 192, 224-255）
-local function is_reserved_block(first_octet)
-    if first_octet == 0 or first_octet == 10 or first_octet == 127 then return true end
-    if first_octet == 172 or first_octet == 192 then return true end
-    if first_octet >= 224 then return true end
-    return false
+-- 生成完整的代理放行路由（对标 mynet_tui GenerateFixedProxyRoutes）
+-- 格式: node_id|network|netmask
+-- 排除: 10/8(MyNet内网), 100/8, 127/8(回环), 169/8
+-- 172/8: /16 拆分，排除 172.16-31.0.0/16（Docker/私有）
+-- 192/8: /16 拆分，排除 192.168.0.0/16（私有）
+local function generate_full_proxy_routes(nid_str)
+    local routes = {}
+    for i = 1, 223 do
+        if i == 10 or i == 100 or i == 127 or i == 169 then
+            -- 完全排除
+        elseif i == 172 then
+            -- /16 拆分：排除 172.16-31（172.16.0.0/12 私有网络）
+            for j = 0, 255 do
+                if j < 16 or j > 31 then
+                    routes[#routes + 1] = string.format("%s|172.%d.0.0|255.255.0.0", nid_str, j)
+                end
+            end
+        elseif i == 192 then
+            -- /16 拆分：排除 192.168（私有网络）
+            for j = 0, 255 do
+                if j ~= 168 then
+                    routes[#routes + 1] = string.format("%s|192.%d.0.0|255.255.0.0", nid_str, j)
+                end
+            end
+        else
+            routes[#routes + 1] = string.format("%s|%d.0.0.0|255.0.0.0", nid_str, i)
+        end
+    end
+    return routes
 end
 
 -- 获取 GNB route.conf 路径（driver/gnb/conf/{nid}/route.conf）
@@ -486,17 +514,17 @@ local function get_route_conf_path()
     return conf_root .. "/" .. nid_str .. "/route.conf", nid_str
 end
 
--- 从文件内容中移除 marker 段（含 marker 行本身）
-local function strip_marker_section(content)
-    if not content or not content:find(M.INJECT_MARKER_BEGIN, 1, true) then
+-- 通用 marker 段剥离（含 marker 行本身）
+local function strip_section(content, begin_marker, end_marker)
+    if not content or not content:find(begin_marker, 1, true) then
         return content
     end
     local result = {}
     local skipping = false
     for line in (content .. "\n"):gmatch("([^\n]*)\n") do
-        if line:find(M.INJECT_MARKER_BEGIN, 1, true) then
+        if line:find(begin_marker, 1, true) then
             skipping = true
-        elseif line:find(M.INJECT_MARKER_END, 1, true) then
+        elseif line:find(end_marker, 1, true) then
             skipping = false
         elseif not skipping then
             result[#result + 1] = line
@@ -509,7 +537,19 @@ local function strip_marker_section(content)
     return table.concat(result, "\n") .. "\n"
 end
 
+-- 从文件内容中移除 client marker 段
+local function strip_marker_section(content)
+    return strip_section(content, M.INJECT_MARKER_BEGIN, M.INJECT_MARKER_END)
+end
+
+-- 从文件内容中移除 server marker 段
+local function strip_server_section(content)
+    return strip_section(content, M.SERVER_MARKER_BEGIN, M.SERVER_MARKER_END)
+end
+
 -- 注入 proxy 路由到 GNB route.conf（幂等：先清旧段再追加）
+-- client/both: 为每个 proxy_peer 注入出口路由
+-- server/both: 为自身节点注入放行路由（GNB数据层声明自身可处理这些网段）
 function M.route_inject()
     local route_conf, nid_str = get_route_conf_path()
     if not route_conf then return nil, nid_str end
@@ -519,57 +559,91 @@ function M.route_inject()
     end
 
     local cfg = M.load_config()
+    local proxy_mode  = cfg.proxy_mode  or "client"
     local proxy_peers = cfg.proxy_peers or ""
-    if proxy_peers == "" then
-        return nil, "no proxy peers configured"
+
+    -- client/both 模式必须有 peer 配置
+    if (proxy_mode == "client" or proxy_mode == "both") and proxy_peers == "" then
+        if proxy_mode == "client" then
+            return nil, "no proxy peers configured"
+        end
     end
 
-    -- 读取并清除旧注入段
-    local orig = util.read_file(route_conf) or ""
+    -- 读取并清除旧注入段（client + server 两段）
+    local orig  = util.read_file(route_conf) or ""
     local clean = strip_marker_section(orig)
+    clean = strip_server_section(clean)
 
-    -- 生成新路由（GNB pipe 格式: peer_nid|network|netmask）
-    local lines = {}
-    lines[#lines + 1] = M.INJECT_MARKER_BEGIN
-    lines[#lines + 1] = "# Injected at: " .. os.date("%Y-%m-%d %H:%M:%S")
+    local total_client = 0
+    local total_server = 0
+    local appended = ""
 
-    local total = 0
-    for peer_nid in proxy_peers:gmatch("[^,]+") do
-        peer_nid = util.trim(peer_nid)
-        if peer_nid ~= "" then
-            lines[#lines + 1] = "# Peer: " .. peer_nid
-            for octet = 1, 223 do
-                if not is_reserved_block(octet) then
-                    lines[#lines + 1] = string.format(
-                        "%s|%d.0.0.0|255.0.0.0", peer_nid, octet)
-                    total = total + 1
+    -- ── Client/Both: 为每个 proxy_peer 注入出口路由 ──
+    if (proxy_mode == "client" or proxy_mode == "both") and proxy_peers ~= "" then
+        local lines = {}
+        lines[#lines + 1] = M.INJECT_MARKER_BEGIN
+        lines[#lines + 1] = "# Injected at: " .. os.date("%Y-%m-%d %H:%M:%S")
+        for peer_nid in proxy_peers:gmatch("[^,]+") do
+            peer_nid = util.trim(peer_nid)
+            if peer_nid ~= "" then
+                lines[#lines + 1] = "# Peer: " .. peer_nid
+                local peer_routes = generate_full_proxy_routes(peer_nid)
+                for _, r in ipairs(peer_routes) do
+                    lines[#lines + 1] = r
+                    total_client = total_client + 1
                 end
             end
         end
+        lines[#lines + 1] = M.INJECT_MARKER_END
+        appended = appended .. table.concat(lines, "\n") .. "\n"
     end
-    lines[#lines + 1] = M.INJECT_MARKER_END
+
+    -- ── Server/Both: 为自身节点注入放行路由 ──
+    -- 告知 GNB daemon：本节点负责转发这些公网 IP 段（出口放行）
+    if proxy_mode == "server" or proxy_mode == "both" then
+        local lines = {}
+        lines[#lines + 1] = M.SERVER_MARKER_BEGIN
+        lines[#lines + 1] = "# Self-node passthrough (server mode) at: " .. os.date("%Y-%m-%d %H:%M:%S")
+        lines[#lines + 1] = "# Local node: " .. nid_str
+        local self_routes = generate_full_proxy_routes(nid_str)
+        for _, r in ipairs(self_routes) do
+            lines[#lines + 1] = r
+            total_server = total_server + 1
+        end
+        lines[#lines + 1] = M.SERVER_MARKER_END
+        appended = appended .. table.concat(lines, "\n") .. "\n"
+    end
+
+    if total_client == 0 and total_server == 0 then
+        return nil, "no routes to inject (mode=" .. proxy_mode .. ", peers=" .. proxy_peers .. ")"
+    end
 
     -- 追加到 route.conf（不触发 generate_network_conf）
-    util.write_file(route_conf, clean .. table.concat(lines, "\n") .. "\n")
+    util.write_file(route_conf, clean .. appended)
 
-    util.log_info("route_inject: injected " .. total .. " pipe routes for node " .. nid_str)
-    return { injected = total }
+    util.log_info(string.format(
+        "route_inject: client=%d server=%d routes for node %s (mode=%s)",
+        total_client, total_server, nid_str, proxy_mode))
+    return { injected_client = total_client, injected_server = total_server }
 end
 
--- 从 GNB route.conf 移除 proxy 注入段
+-- 从 GNB route.conf 移除 proxy 注入段（client + server 两段）
 function M.route_restore()
     local route_conf = get_route_conf_path()
     if not route_conf then return nil, "node_id not configured" end
 
     local content = util.read_file(route_conf) or ""
-    if not content:find(M.INJECT_MARKER_BEGIN, 1, true) then
+    local has_client = content:find(M.INJECT_MARKER_BEGIN,  1, true)
+    local has_server = content:find(M.SERVER_MARKER_BEGIN, 1, true)
+    if not has_client and not has_server then
         return true, "nothing to restore"
     end
 
     local clean = strip_marker_section(content)
+    clean = strip_server_section(clean)
     util.write_file(route_conf, clean)
-    util.log_info("route_restore: removed proxy marker section")
-    return true, "removed injected section"
+    util.log_info("route_restore: removed proxy marker sections (client+server)")
+    return true, "removed injected sections"
 end
 
 -- 注入状态查询
@@ -581,19 +655,23 @@ function M.route_inject_status()
     end
 
     local content = util.read_file(route_conf) or ""
-    local has_marker = content:find(M.INJECT_MARKER_BEGIN, 1, true) ~= nil
+    local has_client = content:find(M.INJECT_MARKER_BEGIN,  1, true) ~= nil
+    local has_server = content:find(M.SERVER_MARKER_BEGIN, 1, true) ~= nil
     local count = 0
-    if has_marker then
+    if has_client or has_server then
         for line in content:gmatch("[^\n]+") do
-            if line:match("^%d+|%d+%.0%.0%.0|255%.0%.0%.0$") then
+            -- 匹配 /8 路由 (nodeID|x.0.0.0|255.0.0.0) 和 /16 路由 (nodeID|x.y.0.0|255.255.0.0)
+            if line:match("^%d+|%d+%.%d+%.0%.0|255%.[02][05][05]%.0%.0$") then
                 count = count + 1
             end
         end
     end
 
     return {
-        injected    = has_marker,
-        route_count = count,
+        injected          = has_client or has_server,
+        has_client_routes = has_client,
+        has_server_routes = has_server,
+        route_count       = count,
     }
 end
 

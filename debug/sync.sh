@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 PKG_NAME="luci-app-mynet"
-PKG_VERSION="2.0.2"
+PKG_VERSION="2.1.2"
 PKG_RELEASE="1"
 BUILD_DIR="$PROJECT_DIR/build"
 IPK_FILE="$BUILD_DIR/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_all.ipk"

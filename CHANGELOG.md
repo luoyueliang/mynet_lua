@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.1.2 (2026-04-20)
+
+### Features
+- **proxy route_inject server/both 模式自身放行** — `route_inject()` 升级：
+  - `server`/`both` 模式下为自身节点注入全网放行路由（`#----proxy-server start----` 段）
+  - `client`/`both` 模式出口路由逻辑同步升级：对标 mynet_tui `GenerateFixedProxyRoutes`，172/192 局部段改用 `/16` 拆分排除私有子网
+  - `route_restore()` 同时清除 client + server 两个 marker 段
+  - `route_inject_status()` 新增 `has_client_routes`/`has_server_routes` 字段
+
 ## v2.1.1 (2026-04-20)
 
 ### Chore
