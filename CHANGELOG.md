@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.1.6 (2026-04-21)
+
+### Bug Fixes
+- **node.lua: route.conf 路由格式修正** — `generate_route_conf()` 输出从 `cidr via peer_vip`（内核报 "Nexthop has invalid gateway"）改为 `cidr dev vpn_iface`，修复 5 条跨 zone 子网路由无法添加的问题
+- **proxy hooks: 统一调用 Lua proxy 模块** — `post_start.sh` / `stop.sh` 从直接调用 shell `proxy.sh` 改为 `lua -e` 调用 `proxy.start()` / `proxy.stop()`
+
 ## v2.1.5 (2026-04-21)
 
 ### Bug Fixes
