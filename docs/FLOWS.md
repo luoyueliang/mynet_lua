@@ -173,7 +173,7 @@ flowchart TD
     E --> E1[读取 route.conf 获取对端节点]
     E1 --> E2[为对端添加 GNB 数据路由]
 
-    E2 --> F["执行 proxy.sh start"]
+    E2 --> F["调用 Lua proxy.start()"]
     F --> G[pre_start.sh hook]
     G --> H[创建 ipset 集合]
     H --> I[加载分流规则列表]
@@ -200,7 +200,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[用户点击 Stop/Disable Proxy] --> B["执行 proxy.sh stop"]
+    A[用户点击 Stop/Disable Proxy] --> B["调用 Lua proxy.stop()"]
     B --> C[stop.sh hook]
     C --> D[清除 ipset 集合]
     D --> E[移除策略路由规则]

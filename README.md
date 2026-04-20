@@ -74,8 +74,8 @@ bash debug/sync.sh all
 ```bash
 # 方式 1：IPK 包安装
 # 从 GitHub Releases 下载 .ipk
-scp luci-app-mynet_2.0.0-1_all.ipk root@router:/tmp/
-ssh root@router "opkg install /tmp/luci-app-mynet_2.0.0-1_all.ipk"
+scp luci-app-mynet_2.1.6-1_all.ipk root@router:/tmp/
+ssh root@router "opkg install /tmp/luci-app-mynet_2.1.6-1_all.ipk && rm -rf /tmp/luci-*"
 
 # 方式 2：手动复制
 bash debug/sync.sh all  # 或手动 scp 各目录
@@ -105,6 +105,7 @@ bash debug/sync.sh all  # 或手动 scp 各目录
 - 大整数 node_id 必须使用 `util.int_str()` 转换（避免 Lua 科学计数法）
 - JS 端 `window.mnCurrentNodeId` 使用字符串（避免精度丢失）
 - API URL 通过 `_mnApiBase()` 构造（不硬编码路径）
+- `route.conf` 生成的 OS 路由必须使用 `cidr dev <vpn_iface>`，不能写成 `via peer_vpn_ip`
 
 ### 国际化
 - 模板使用 `<%:String%>` LuCI 翻译标签
@@ -119,4 +120,4 @@ bash debug/sync.sh all  # 或手动 scp 各目录
 
 ## 版本
 
-v2.0.0 — 2026-04
+v2.1.6 — 2026-04-21

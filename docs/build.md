@@ -1,7 +1,7 @@
 # 编译构建指南
 
 本项目为 OpenWrt LuCI 纯 Lua 包，**无需本地 C 编译工具链**，`Build/Compile` 步骤为空。
-实际打包在 OpenWrt SDK / 0.32 测试环境中完成。
+当前仓库提供本地打包脚本，日常构建直接使用 `bash debug/sync.sh build` 即可。
 
 ---
 
@@ -10,13 +10,34 @@
 | 字段 | 值 |
 |------|----|
 | 包名 | `luci-app-mynet` |
-| 版本 | `1.0.0-1` |
+| 版本 | `2.1.6-1` |
 | 架构 | `all`（纯 Lua，与 CPU 架构无关）|
-| 依赖 | `luci-base`, `curl`, `luci-lib-jsonc` |
+| 依赖 | `luci-base`, `curl`, `libcurl-gnutls4`, `luci-lib-jsonc`, `bash`, `ca-bundle` |
 
 ---
 
-## 一、在 0.32 测试环境中编译
+## 一、仓库内直接构建（推荐）
+
+```bash
+cd /path/to/mynet_lua
+bash debug/sync.sh build
+```
+
+输出文件：
+
+```bash
+build/luci-app-mynet_2.1.6-1_all.ipk
+```
+
+该脚本会完成：
+
+- 打包 LuCI Lua / View / 静态资源
+- 生成中文 `.lmo` 翻译文件
+- 生成可直接 `opkg install` 的 `.ipk`
+
+---
+
+## 二、在 OpenWrt SDK 中编译
 
 ### 1. 将源码放入 OpenWrt 包目录
 
@@ -57,18 +78,18 @@ make package/luci-app-mynet/install V=s
 输出 ipk 路径（通常）：
 
 ```
-bin/packages/<arch>/base/luci-app-mynet_1.0.0-1_all.ipk
+bin/packages/<arch>/base/luci-app-mynet_2.1.6-1_all.ipk
 ```
 
 ---
 
-## 二、手动打包（不进 OpenWrt 树）
+## 三、手动打包（不进 OpenWrt 树）
 
 如果只需生成 ipk 用于快速测试，可以手动模拟 OpenWrt 包安装结构：
 
 ```bash
 #!/bin/bash
-PKG=luci-app-mynet_1.0.0-1_all
+PKG=luci-app-mynet_2.1.6-1_all
 mkdir -p /tmp/$PKG/data/usr/lib/lua/luci/controller
 mkdir -p /tmp/$PKG/data/usr/lib/lua/luci/model/mynet
 mkdir -p /tmp/$PKG/data/usr/share/luci/view/mynet
@@ -89,9 +110,9 @@ cp root/etc/mynet/conf/config.json  /tmp/$PKG/data/etc/mynet/conf/
 mkdir -p /tmp/$PKG/CONTROL
 cat > /tmp/$PKG/CONTROL/control <<EOF
 Package: luci-app-mynet
-Version: 1.0.0-1
+Version: 2.1.6-1
 Architecture: all
-Depends: luci-base, curl, luci-lib-jsonc
+Depends: luci-base, curl, libcurl-gnutls4, luci-lib-jsonc, bash, ca-bundle
 Section: luci
 Description: MyNet VPN management interface for OpenWrt.
 EOF
@@ -107,14 +128,20 @@ echo "ipk 已生成: /tmp/$PKG.ipk"
 
 ---
 
-## 三、版本升级
+## 四、版本升级
 
 修改 [Makefile](../Makefile) 中的 `PKG_VERSION` 和 `PKG_RELEASE`：
 
 ```makefile
-PKG_VERSION:=1.0.1
+PKG_VERSION:=2.1.6
 PKG_RELEASE:=1
 ```
+
+同时需要同步更新：
+
+- [debug/sync.sh](../debug/sync.sh) 中的 `PKG_VERSION`
+- [luasrc/model/mynet/util.lua](../luasrc/model/mynet/util.lua) 中的 `APP_VERSION`
+- [CHANGELOG.md](../CHANGELOG.md) 中的版本记录
 
 ---
 
@@ -122,4 +149,5 @@ PKG_RELEASE:=1
 
 - 本项目无 C/C++ 代码，不需要交叉编译工具链
 - Lua 文件修改后**无需重新编译**，直接 `scp` 覆盖到路由器即可测试
+- `route.conf` 的 OS 路由格式应保持为 `cidr dev <iface>`，不要改回 `via <peer_vpn_ip>`
 - 修改完 `.htm` 模板后需清理 LuCI 缓存：`rm -rf /tmp/luci-*`

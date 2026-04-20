@@ -1,143 +1,54 @@
 # MyNet OpenWrt Runtime
 
-本目录是 MyNet 在 OpenWrt 上的运行时脚本源码，不再做平台分层。
+本目录是 MyNet 在 OpenWrt 上的运行时脚本源码。
 
 ## 目录结构
 
 ```
 scripts/runtime/
-├── rc.mynet
-├── route.mynet
-├── firewall.mynet
-├── modules/
-└── docs/
+├── rc.mynet            # init.d 服务脚本源码
+├── route.mynet         # 路由管理脚本源码
+├── firewall.mynet      # 防火墙管理脚本源码
+└── modules/
+    ├── route.sh        # 路由模块
+    └── firewall.sh     # 防火墙模块
 ```
 
-## 部署后的系统结构
+## 部署后的系统路径
 
 ```
-/etc/init.d/mynet
-/etc/mynet/scripts/route.mynet
-/etc/mynet/scripts/firewall.mynet
+/etc/init.d/mynet                       ← rc.mynet
+/etc/mynet/scripts/route.mynet          ← route.mynet
+/etc/mynet/scripts/firewall.mynet       ← firewall.mynet
 ```
 
-这些源码由 Makefile、release workflow 和 debug/sync.sh 复制到运行时路径。
+这些文件由 Makefile / release workflow / `debug/sync.sh` 复制到运行时路径。
 
-## 📋 完整工作流程
+## 路由管理
 
-### 阶段一：环境准备
-1. **系统检查**: 检测OpenWrt版本和必要组件
-2. **路径检测**: 自动检测MyNet二进制文件位置
-3. **配置验证**: 验证现有配置文件
-
-### 阶段二：服务部署  
-1. **服务脚本安装**: 复制`rc.mynet`到`/etc/init.d/mynet`
-2. **权限设置**: 设置执行权限
-3. **服务注册**: 启用自启动服务
-
-### 阶段三：网络配置
-1. **脚本部署**: 
-   - `firewall.mynet` → `/etc/mynet/script/firewall.mynet`
-   - `route.sh` → `/etc/mynet/script/route.sh`
-2. **配置生成**:
-   - 主配置 → `/etc/mynet/conf/mynet.conf`
-   - 路由配置 → `/etc/mynet/conf/route.conf`
-3. **模块化调用**: 服务脚本动态调用防火墙和路由模块
-
-### 阶段四：服务启动
-1. **服务启动**: 启动MyNet服务
-2. **状态检查**: 验证服务运行状态
-3. **网络测试**: 验证网络连通性
-
-## 🔧 高级配置
-
-### 手动网关配置
 ```bash
-# 使用简化版网关配置脚本
-./route_gw_simple.sh --interactive
+# 应用路由（读取 route.conf，添加内核路由）
+MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/route.mynet start \
+  --config /etc/mynet/conf/route.conf --interface gnb_tun_16
 
-# 干运行模式（测试配置）
-./route_gw_simple.sh --dry-run
+# 移除路由
+MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/route.mynet stop \
+  --config /etc/mynet/conf/route.conf --interface gnb_tun_16
 ```
 
-### 路由管理
-```bash
-# 使用部署后的路由脚本
-/etc/mynet/script/route.sh --config /etc/mynet/conf/route.conf apply
+### route.conf 格式
 
-# 查看路由状态
-/etc/mynet/script/route.sh --status
+```
+# <cidr> dev <vpn_iface>
+10.150.14.220/32 dev gnb_tun_16
+192.168.8.0/24 dev gnb_tun_16
 ```
 
-### 防火墙管理
-```bash
-# 手动配置防火墙
-/etc/mynet/script/firewall.mynet start --vpn-type gnb --router-mode bypass
+> 注意：不要使用 `via <gateway>` 格式，tun 设备的对端 VPN IP 不是 on-link 网关。
 
-# 停止防火墙配置
-/etc/mynet/script/firewall.mynet stop
-```
+## 相关文档
 
-## 📝 配置文件
-
-### 主配置文件
-```bash
-# /etc/mynet/conf/mynet.conf
-VPN_TYPE="gnb"                    # VPN类型
-ROUTER_MODE="bypass"              # 路由模式
-VPN_INTERFACE="gnb_tun0"         # VPN接口名称
-NODE_ID="1234567890123456"       # 节点ID
-```
-
-### 路由配置格式
-```bash
-# /etc/mynet/conf/route.conf
-# 格式: nodeId|ipAddress|netmask
-1234567890123456|192.168.1.0|255.255.255.0
-9876543210987654|10.0.0.0|255.0.0.0
-```
-
-### 模板文件位置
-- 部署前: `templates/` 目录
-- 部署后: `/etc/mynet/conf/` 目录
-
-## 🛠️ 故障排除
-
-### 常见问题
-1. **服务无法启动**: 检查MyNet二进制文件路径
-2. **网络不通**: 验证防火墙和路由配置
-3. **权限问题**: 确保以root权限运行
-
-### 调试模式
-```bash
-# 启用详细日志
-./deploy-service.sh --verbose
-
-# 检查服务状态  
-service mynet status
-```
-
-## 📚 详细文档
-
-- [技术文档索引](docs/INDEX.md) - 完整技术文档导航
-- [改进总结](docs/IMPROVEMENT_SUMMARY.md) - 最新功能和改进
-- [OpenWrt网关指南](docs/openwrt_gw.md) - 网关配置详细说明
-
-## ⚡ 特性
-
-- ✅ **无人值守部署**: 支持`--auto-yes`和`--force`参数
-- ✅ **智能路径检测**: 自动发现MyNet安装位置  
-- ✅ **GNB兼容**: 支持GNB路由配置格式
-- ✅ **防火墙集成**: 自动配置OpenWrt防火墙规则
-- ✅ **服务管理**: 完整的服务生命周期管理
-- ✅ **配置模板**: 提供标准配置模板
-
-## 🔗 相关工具
-
-- **route.sh**: 路由规则处理（从上级目录复制）
-- **rc.mynet**: OpenWrt标准服务脚本
-- **firewall.mynet**: 防火墙规则文件  
-- **route_gw_simple.sh**: 手动网关配置工具
+- [OpenWrt VPN 跨网段互通设计](../../docs/openwrt_gw.md)
 
 ## 📋 依赖要求
 
