@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.1.4 (2026-04-20)
+
+### Bug Fixes
+- **删除 network.conf 中间层** — `generate_network_conf()` 重命名为 `generate_route_conf()`，不再写入冗余的 per-node `network.conf`，只保留 `/etc/mynet/conf/route.conf` 输出
+- **route.conf 生成过滤所有 proxy 标记段** — `parse_gnb_route_conf()` 同时跳过 client (`#----proxy start/end----`) 和 server (`#----proxy-server start/end----`) marker 段，防止策略路由条目泄漏到 OS 内核路由表导致路由爆炸（714 条）
+- **route.conf 空内容保护** — `refresh_single_config("route")` 和 `refresh_configs_bundle()` 拒绝写入空的 API 响应
+
 ## v2.1.3 (2026-04-20)
 
 ### Bug Fixes

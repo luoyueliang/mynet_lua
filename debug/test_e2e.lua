@@ -168,9 +168,9 @@ if should_run("auth") then
         assert_true(file_exists(CONF_DIR .. "/route.conf"), "route.conf missing")
     end)
 
-    test("generate_network_conf", function()
-        local path, err = node.generate_network_conf(NODE_ID)
-        assert_true(path or not err, "network.conf: " .. tostring(err))
+    test("generate_route_conf", function()
+        local path, err = node.generate_route_conf(NODE_ID)
+        assert_true(path or not err, "route.conf: " .. tostring(err))
     end)
 
     -- 服务端已知问题 — 标记为 skip 而非 fail

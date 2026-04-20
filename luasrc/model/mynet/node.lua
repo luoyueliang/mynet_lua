@@ -192,9 +192,9 @@ local function apply_local_config_side_effects(node_id, config_type)
     end
 
     if config_type == "route" then
-        local _, network_err = M.generate_network_conf(node_id)
-        if network_err then
-            return false, network_err
+        local _, route_err = M.generate_route_conf(node_id)
+        if route_err then
+            return false, route_err
         end
 
         local proxy_m = require("luci.model.mynet.proxy")
@@ -347,7 +347,10 @@ function M.refresh_configs_bundle(node_id)
     end
     for fname, config_type in pairs(file_map) do
         local content = files[fname]
-        if content and content ~= "" then
+        if config_type == "route" and (not content or util.trim(content) == "") then
+            results.ok = false
+            results.errors[#results.errors + 1] = "write route.conf: bundle returned empty content"
+        elseif content and content ~= "" then
             local ok, we, dest = M.write_local_config(node_id, config_type, content)
             if ok then
                 results.files[#results.files + 1] = dest
@@ -531,8 +534,22 @@ function M.get_peer_keys(node_id)
 end
 
 -- Proxy marker constants（与 proxy.lua / hooks/stop.sh 统一）
-local PROXY_MARKER_BEGIN = "#----proxy start----"
-local PROXY_MARKER_END   = "#----proxy end----"
+local PROXY_MARKER_BEGIN        = "#----proxy start----"
+local PROXY_MARKER_END          = "#----proxy end----"
+local PROXY_SERVER_MARKER_BEGIN = "#----proxy-server start----"
+local PROXY_SERVER_MARKER_END   = "#----proxy-server end----"
+
+local function update_route_skip_state(line, skipping)
+    if line:find(PROXY_MARKER_BEGIN, 1, true)
+        or line:find(PROXY_SERVER_MARKER_BEGIN, 1, true) then
+        return true
+    end
+    if line:find(PROXY_MARKER_END, 1, true)
+        or line:find(PROXY_SERVER_MARKER_END, 1, true) then
+        return false
+    end
+    return skipping
+end
 
 -- ─────────────────────────────────────────────────────────────
 -- 从 route.conf 内容中提取对端节点 ID 列表（格式: nodeID|network|netmask）
@@ -544,10 +561,9 @@ local function extract_peer_ids_from_route(route_content, self_nid)
     local skipping = false
     for line in (route_content .. "\n"):gmatch("([^\n]*)\n") do
         line = line:match("^%s*(.-)%s*$")  -- trim
-        if line:find(PROXY_MARKER_BEGIN, 1, true) then
-            skipping = true
-        elseif line:find(PROXY_MARKER_END, 1, true) then
-            skipping = false
+        local next_skipping = update_route_skip_state(line, skipping)
+        if next_skipping ~= skipping then
+            skipping = next_skipping
         elseif not skipping and line ~= "" and not line:match("^#") then
             local peer_id = line:match("^([^|]+)|")
             if peer_id then
@@ -571,10 +587,9 @@ local function parse_gnb_route_conf(content)
     local skipping = false
     for line in (content .. "\n"):gmatch("([^\n]*)\n") do
         line = line:match("^%s*(.-)%s*$")
-        if line:find(PROXY_MARKER_BEGIN, 1, true) then
-            skipping = true
-        elseif line:find(PROXY_MARKER_END, 1, true) then
-            skipping = false
+        local next_skipping = update_route_skip_state(line, skipping)
+        if next_skipping ~= skipping then
+            skipping = next_skipping
         elseif not skipping and line ~= "" and not line:match("^#") then
             local parts = {}
             for p in line:gmatch("[^|]+") do
@@ -739,6 +754,11 @@ function M.refresh_single_config(node_id, config_type)
         if err then
             local route_path = resolve_local_config_path(node_id, "route")
             return { ok = false, file = route_path, error = err }
+        end
+        if not text or util.trim(text) == "" then
+            local route_path = resolve_local_config_path(node_id, "route")
+            return { ok = false, file = route_path,
+                     error = "API returned empty route.conf content" }
         end
         local ok, we, route_path = M.write_local_config(node_id, "route", text)
         if ok then
@@ -1069,11 +1089,9 @@ end
 
 -- ─────────────────────────────────────────────────────────────
 -- 生成 /etc/mynet/conf/route.conf（OS 级路由配置）
--- 格式对齐 mynet_client network-routes.js generateNetworkConf
--- 输出: <cidr> via <gateway>
--- 同时写入 per-node network.conf（向后兼容）
+-- 从 GNB route.conf 解析路由条目，过滤 proxy 段，输出 <cidr> via <gw>
 -- ─────────────────────────────────────────────────────────────
-function M.generate_network_conf(node_id)
+function M.generate_route_conf(node_id)
     local n = nid(node_id)
     local route_path = string.format("%s/%s/route.conf", util.GNB_CONF_DIR, n)
     local route_content = util.trim(util.read_file(route_path) or "")
@@ -1120,16 +1138,13 @@ function M.generate_network_conf(node_id)
 
     local content = table.concat(lines, "\n") .. "\n"
 
-    -- 写入 per-node network.conf（向后兼容）
-    local conf_path = string.format("%s/%s/network.conf", util.GNB_CONF_DIR, n)
-    local ok, we = util.write_file(conf_path, content)
-    if not ok then return nil, "write network.conf: " .. (we or "") end
-
-    -- 同步写入 /etc/mynet/conf/route.conf（供 rc.mynet + service tab 使用）
+    -- 写入 /etc/mynet/conf/route.conf（供 rc.mynet + service tab 使用）
     util.ensure_dir(util.CONF_DIR)
-    util.write_file(util.CONF_DIR .. "/route.conf", content)
+    local route_conf_path = util.CONF_DIR .. "/route.conf"
+    local ok, we = util.write_file(route_conf_path, content)
+    if not ok then return nil, "write route.conf: " .. (we or "") end
 
-    return conf_path, nil
+    return route_conf_path, nil
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -1245,12 +1260,12 @@ function M.start_gnb(node_id)
     -- 状态 → STARTING
     save_svc_state(M.SVC_STATE.STARTING, "spawning gnb")
 
-    -- 生成 network.conf
-    local nconf, nconf_err = M.generate_network_conf(node_id)
-    if nconf then
-        util.log_info("node", "generated " .. nconf)
-    elseif nconf_err then
-        util.log_warn("node", "network.conf: " .. nconf_err)
+    -- 生成 /etc/mynet/conf/route.conf
+    local rconf, rconf_err = M.generate_route_conf(node_id)
+    if rconf then
+        util.log_info("node", "generated " .. rconf)
+    elseif rconf_err then
+        util.log_warn("node", "route.conf generation: " .. rconf_err)
     end
 
     util.ensure_dir(conf)

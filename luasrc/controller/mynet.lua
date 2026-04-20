@@ -2276,10 +2276,10 @@ function api_guest_add_node()
 
     local node, err = guest_m.add_node(name, custom_nid)
     if err then json_err(err); return end
-    -- route.conf 已在 add_node 内更新，同步重新生成 network.conf
+    -- route.conf 已在 add_node 内更新，同步重新生成 /etc/mynet/conf/route.conf
     local g = guest_m.load_config()
     if g and g.local_node_id then
-        node_m.generate_network_conf(g.local_node_id)
+        node_m.generate_route_conf(g.local_node_id)
     end
     json_ok({ success = true, data = node })
 end
@@ -2295,10 +2295,10 @@ function api_guest_delete()
 
     local ok, err = guest_m.delete_node(nid)
     if err then json_err(err); return end
-    -- route.conf 已在 delete_node 内更新，同步重新生成 network.conf
+    -- route.conf 已在 delete_node 内更新，同步重新生成 /etc/mynet/conf/route.conf
     local g = guest_m.load_config()
     if g and g.local_node_id then
-        node_m.generate_network_conf(g.local_node_id)
+        node_m.generate_route_conf(g.local_node_id)
     end
     json_ok({ success = true })
 end
@@ -2390,8 +2390,8 @@ function api_guest_start()
         json_err("route.conf 生成失败: " .. (rerr or "unknown")); return
     end
 
-    -- 生成 network.conf（从 route.conf 派生 CIDR 路由）
-    node_m.generate_network_conf(g.local_node_id)
+    -- 生成 /etc/mynet/conf/route.conf（从 GNB route.conf 派生 CIDR 路由）
+    node_m.generate_route_conf(g.local_node_id)
 
     -- 停止已有进程 → 启动 GNB（用 shell 后台 &，不用 -d 避免 daemon fork 问题）
     local log_file = conf_dir .. "/gnb.log"

@@ -146,9 +146,9 @@ function M.ensure_route_conf(node_id)
     if not ok then
         return nil, "写入 route.conf 失败: " .. (we or "")
     end
-    -- 生成 network.conf + 同步 /etc/mynet/conf/route.conf（<cidr> via <gateway> 格式）
+    -- 同步生成 /etc/mynet/conf/route.conf（<cidr> via <gateway> 格式）
     local node_m = require("luci.model.mynet.node")
-    node_m.generate_network_conf(node_id)
+    node_m.generate_route_conf(node_id)
     return true, nil
 end
 

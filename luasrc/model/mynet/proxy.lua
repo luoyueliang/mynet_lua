@@ -463,7 +463,7 @@ end
 -- 注入使用 GNB pipe 格式: node_id|network|netmask
 -- client/both: 为 proxy_peers 注入出口路由
 -- server/both: 为自身节点注入放行路由（告知 GNB 自身处理这些网段的转发）
--- OS 层路由由 route_policy.sh 独立路由表 + fwmark 处理，此处不触发 generate_network_conf
+-- OS 层路由由 route_policy.sh 独立路由表 + fwmark 处理，此处不触发 generate_route_conf
 -- ─────────────────────────────────────────────────────────────
 
 -- Marker（与 scripts/proxy/hooks/stop.sh 统一）
@@ -618,7 +618,7 @@ function M.route_inject()
         return nil, "no routes to inject (mode=" .. proxy_mode .. ", peers=" .. proxy_peers .. ")"
     end
 
-    -- 追加到 route.conf（不触发 generate_network_conf）
+    -- 追加到 route.conf（不触发 generate_route_conf）
     util.write_file(route_conf, clean .. appended)
 
     util.log_info(string.format(
