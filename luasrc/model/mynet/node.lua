@@ -1112,13 +1112,14 @@ function M.generate_route_conf(node_id)
         "# Node: " .. n .. " (" .. (rt.self_vpn_ip or "unknown") .. ")",
         "# VPN Subnet: " .. (rt.vpn_subnet or "unknown"),
         "# Updated: " .. os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        "# Format: <cidr> dev <interface>",
+        "# Format: peer /32 = dev <iface>; subnet = via <peer_vpn_ip>",
         "#!self_vpn_ip=" .. (rt.self_vpn_ip or ""),
         "",
     }
 
+    -- Peer /32 routes: 直连 dev，建立 peer VPN IP 的可达性
     if #rt.peer_routes > 0 then
-        lines[#lines + 1] = "# Cross-zone peer relay routes"
+        lines[#lines + 1] = "# Cross-zone peer relay routes (dev — establish reachability)"
         for _, r in ipairs(rt.peer_routes) do
             lines[#lines + 1] = "# Peer " .. r.node_id .. " (" .. r.network .. ")"
             lines[#lines + 1] = r.cidr .. " dev " .. vpn_iface
@@ -1126,15 +1127,16 @@ function M.generate_route_conf(node_id)
         lines[#lines + 1] = ""
     end
 
+    -- Subnet routes: via peer_vpn_ip，内核通过已有的 /32 dev 路由找到下一跳
     if #rt.gw_routes > 0 then
-        lines[#lines + 1] = "# Subnet routes (peer LAN segments)"
+        lines[#lines + 1] = "# Subnet routes (via peer gateway)"
         local last_nid = ""
         for _, r in ipairs(rt.gw_routes) do
             if r.node_id ~= last_nid then
                 lines[#lines + 1] = "# Node " .. r.node_id .. " (" .. r.gateway .. ")"
                 last_nid = r.node_id
             end
-            lines[#lines + 1] = r.cidr .. " dev " .. vpn_iface
+            lines[#lines + 1] = r.cidr .. " via " .. r.gateway
         end
     end
 
