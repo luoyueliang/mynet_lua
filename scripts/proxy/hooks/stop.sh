@@ -6,8 +6,6 @@
 #
 
 ROLE_CONF="$MYNET_HOME/conf/proxy/proxy_role.conf"
-PROXY_SH="$MYNET_HOME/scripts/proxy/proxy.sh"
-
 # Marker constants (must match proxy.lua and pre_start/post_start)
 MARKER_START="#----proxy start----"
 MARKER_END="#----proxy end----"
@@ -18,10 +16,15 @@ if [ -z "$MYNET_HOME" ] || [ ! -d "$MYNET_HOME" ]; then
     exit 0
 fi
 
-# 1. Stop proxy.sh (policy routing + DNS) — unconditional
-if [ -f "$PROXY_SH" ]; then
-    log_proxy "stopping proxy.sh..."
-    MYNET_HOME="$MYNET_HOME" bash "$PROXY_SH" stop 2>&1 || true
+# 1. Stop proxy (policy routing + DNS) — unconditional
+if command -v lua >/dev/null 2>&1; then
+    log_proxy "stopping proxy..."
+    MYNET_HOME="$MYNET_HOME" lua <<'LUA' 2>&1 || true
+local ok, proxy = pcall(require, "luci.model.mynet.proxy")
+if ok and proxy and proxy.stop then
+    proxy.stop()
+end
+LUA
 fi
 
 # 2. Clean GNB route.conf marker section

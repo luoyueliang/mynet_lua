@@ -1104,35 +1104,37 @@ function M.generate_route_conf(node_id)
         return nil, "no routes parsed from route.conf"
     end
 
+    local vpn_iface = cfg.get_vpn_interface()
+
     local rt = build_route_table(entries, n)
     local lines = {
         "# MyNet Network Routes — auto-generated",
         "# Node: " .. n .. " (" .. (rt.self_vpn_ip or "unknown") .. ")",
         "# VPN Subnet: " .. (rt.vpn_subnet or "unknown"),
         "# Updated: " .. os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        "# Format: <cidr> via <gateway>",
+        "# Format: <cidr> dev <interface>",
         "#!self_vpn_ip=" .. (rt.self_vpn_ip or ""),
         "",
     }
 
     if #rt.peer_routes > 0 then
-        lines[#lines + 1] = "# Cross-zone peer relay routes (via self VPN IP)"
+        lines[#lines + 1] = "# Cross-zone peer relay routes"
         for _, r in ipairs(rt.peer_routes) do
             lines[#lines + 1] = "# Peer " .. r.node_id .. " (" .. r.network .. ")"
-            lines[#lines + 1] = r.cidr .. " via " .. r.gateway
+            lines[#lines + 1] = r.cidr .. " dev " .. vpn_iface
         end
         lines[#lines + 1] = ""
     end
 
     if #rt.gw_routes > 0 then
-        lines[#lines + 1] = "# Subnet routes (via peer VPN IP)"
+        lines[#lines + 1] = "# Subnet routes (peer LAN segments)"
         local last_nid = ""
         for _, r in ipairs(rt.gw_routes) do
             if r.node_id ~= last_nid then
-                lines[#lines + 1] = "# Node " .. r.node_id .. " via " .. r.gateway
+                lines[#lines + 1] = "# Node " .. r.node_id .. " (" .. r.gateway .. ")"
                 last_nid = r.node_id
             end
-            lines[#lines + 1] = r.cidr .. " via " .. r.gateway
+            lines[#lines + 1] = r.cidr .. " dev " .. vpn_iface
         end
     end
 

@@ -342,10 +342,11 @@ end
 
 function M.start(opts)
     opts = opts or {}
-    local mode       = opts.mode       or "client"
-    local region     = opts.region     or "domestic"
-    local dns_mode   = opts.dns_mode   or "none"
-    local dns_server = opts.dns_server or ""
+    local current    = M.load_config()
+    local mode       = opts.mode       or current.proxy_mode  or "client"
+    local region     = opts.region     or current.node_region or "domestic"
+    local dns_mode   = opts.dns_mode   or current.dns_mode    or "none"
+    local dns_server = opts.dns_server or current.dns_server  or ""
 
     -- 前置检查：GNB 必须已运行
     local cfg_m = require("luci.model.mynet.config")
