@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-mynet
-PKG_VERSION:=2.1.4
+PKG_VERSION:=2.1.5
 PKG_RELEASE:=1
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
@@ -53,7 +53,7 @@ define Package/luci-app-mynet/install
 
 	# --- Init script (rc.mynet → /etc/init.d/mynet) ---
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/rc.mynet $(1)/etc/init.d/mynet
+	$(INSTALL_BIN) ./scripts/runtime/rc.mynet $(1)/etc/init.d/mynet
 
 	# --- Runtime scripts: proxy ---
 	$(INSTALL_DIR) $(1)/etc/mynet/scripts/proxy/hooks
@@ -61,9 +61,7 @@ define Package/luci-app-mynet/install
 	$(INSTALL_BIN) ./scripts/proxy/hooks/pre_start.sh $(1)/etc/mynet/scripts/proxy/hooks/
 	$(INSTALL_BIN) ./scripts/proxy/hooks/post_start.sh $(1)/etc/mynet/scripts/proxy/hooks/
 	$(INSTALL_BIN) ./scripts/proxy/hooks/stop.sh $(1)/etc/mynet/scripts/proxy/hooks/
-	$(INSTALL_DIR) $(1)/etc/mynet/scripts/proxy/openwrt
-	$(INSTALL_BIN) ./scripts/proxy/openwrt/route_policy.sh \
-		$(1)/etc/mynet/scripts/proxy/openwrt/
+	$(INSTALL_BIN) ./scripts/proxy/route_policy.sh $(1)/etc/mynet/scripts/proxy/
 
 	# --- Runtime scripts: tools (optional diagnostics) ---
 	$(INSTALL_DIR) $(1)/etc/mynet/scripts/tools
@@ -81,9 +79,9 @@ define Package/luci-app-mynet/install
 
 	# --- Deploy route.mynet / firewall.mynet to scripts/ (fixed path) ---
 	$(INSTALL_DIR) $(1)/etc/mynet/scripts
-	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/route.mynet \
+	$(INSTALL_BIN) ./scripts/runtime/route.mynet \
 		$(1)/etc/mynet/scripts/
-	$(INSTALL_BIN) ./scripts/_src/openwrt/runtime/firewall.mynet \
+	$(INSTALL_BIN) ./scripts/runtime/firewall.mynet \
 		$(1)/etc/mynet/scripts/
 
 	# --- Runtime directories (empty, needed at runtime) ---

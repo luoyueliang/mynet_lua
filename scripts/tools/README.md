@@ -306,7 +306,7 @@ print_info()    { echo -e "${BLUE}ℹ️  $1${NC}"; }
 - [MyNet 架构文档](../../docs/ARCHITECTURE.md)
 - [网络快速参考](../../docs/QUICK_REFERENCE.md)
 - [用户指南](../../docs/USER_GUIDE.md)
-- [OpenWrt 运行时文档](../_src/openwrt/runtime/README.md)
+- [OpenWrt 运行时文档](../runtime/README.md)
 
 ---
 

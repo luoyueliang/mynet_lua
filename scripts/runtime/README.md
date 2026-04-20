@@ -1,53 +1,27 @@
-# OpenWrt MyNet 部署脚本
+# MyNet OpenWrt Runtime
 
-OpenWrt环境下的MyNet VPN网关自动化部署工具集。
+本目录是 MyNet 在 OpenWrt 上的运行时脚本源码，不再做平台分层。
 
-## 📁 目录结构
-
-```
-scripts/openwrt/
-├── deploy-service.sh           # 🚀 主部署脚本（推荐使用）
-├── rc.mynet                   # 📋 MyNet服务启动脚本  
-├── route.sh                   # 🔧 路由处理脚本
-├── route_gw_simple.sh         # 🛠️ 手动网关配置脚本
-├── firewall.mynet             # 🔥 防火墙规则文件
-├── docs/                      # 📚 详细技术文档
-└── templates/                 # 📄 配置模板文件
-```
-
-## 🏗️ 部署后的系统结构
+## 目录结构
 
 ```
-/etc/mynet/                    # MyNet 主目录
-├── conf/                      # 📋 配置文件目录
-│   ├── mynet.conf            # 主配置文件
-│   ├── route.conf            # 路由配置文件
-│   └── [其他配置模板]
-└── script/                    # 🔧 可执行脚本目录
-    ├── firewall.mynet        # 防火墙配置脚本
-    ├── route.sh              # 路由处理脚本
-    └── [其他工具脚本]
-
-/etc/init.d/mynet             # 🎯 系统服务脚本
-/var/log/mynet.log           # 📄 服务日志文件
+scripts/runtime/
+├── rc.mynet
+├── route.mynet
+├── firewall.mynet
+├── modules/
+└── docs/
 ```
 
-## 🚀 快速开始
+## 部署后的系统结构
 
-### 1. 无人值守部署（推荐）
-```bash
-# 自动化部署MyNet服务
-./deploy-service.sh --auto-yes
-
-# 或使用强制模式（跳过确认）
-./deploy-service.sh --force
+```
+/etc/init.d/mynet
+/etc/mynet/scripts/route.mynet
+/etc/mynet/scripts/firewall.mynet
 ```
 
-### 2. 交互式部署
-```bash
-# 交互式配置部署
-./deploy-service.sh
-```
+这些源码由 Makefile、release workflow 和 debug/sync.sh 复制到运行时路径。
 
 ## 📋 完整工作流程
 

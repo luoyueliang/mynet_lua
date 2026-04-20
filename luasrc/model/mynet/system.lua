@@ -207,9 +207,6 @@ end
 -- firewall.mynet 脚本路径（ipk 安装时已部署到 scripts/）
 local function find_fw_script()
     if util.file_exists(util.FIREWALL_SCRIPT) then return util.FIREWALL_SCRIPT end
-    -- 兼容旧路径
-    local alt = util.MYNET_HOME .. "/scripts/_src/openwrt/runtime/firewall.mynet"
-    if util.file_exists(alt) then return alt end
     return nil
 end
 
@@ -460,28 +457,23 @@ end
 -- ─────────────────────────────────────────────────────────────
 function M._handle_heartbeat_commands(commands, node_id)
     if type(commands) ~= "table" or #commands == 0 then return end
+    local node_m = require("luci.model.mynet.node")
     for _, cmd in ipairs(commands) do
         local action = cmd.action or ""
         util.log_info("heartbeat", "server command: " .. action
             .. (cmd.params and cmd.params.reason and (" reason=" .. cmd.params.reason) or ""))
 
         if action == "config.refresh" then
-            local node_m = require("luci.model.mynet.node")
             node_m.refresh_configs_bundle(node_id)
         elseif action == "service.restart" then
-            local node_m = require("luci.model.mynet.node")
             node_m.restart_vpn()
         elseif action == "gnb.restart" then
-            local node_m = require("luci.model.mynet.node")
             node_m.restart_gnb(node_id)
         elseif action == "gnb.start" then
-            local node_m = require("luci.model.mynet.node")
             node_m.start_gnb(node_id)
         elseif action == "gnb.stop" then
-            local node_m = require("luci.model.mynet.node")
             node_m.stop_gnb(node_id)
         elseif action == "route.refresh" then
-            local node_m = require("luci.model.mynet.node")
             node_m.refresh_single_config(node_id, "route")
         elseif action == "client.report" then
             -- 立即再上报一次（避免递归：仅日志记录，不再次调用）

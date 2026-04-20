@@ -1612,10 +1612,10 @@ end
 
 local function wait_for_iface(ifname, timeout_s)
     timeout_s = timeout_s or 5
-    for _ = 1, timeout_s * 3 do
+    for _ = 1, timeout_s do
         local out = util.trim(util.exec("ip link show " .. ifname .. " 2>/dev/null") or "")
         if out ~= "" then return true end
-        util.exec("sleep 0.3")
+        os.execute("sleep 1")
     end
     return false
 end
@@ -1850,7 +1850,7 @@ end
 
 function M.restart_service(node_id)
     M.stop_service(node_id)
-    util.exec("sleep 0.5")
+    os.execute("sleep 1")
     return M.start_service(node_id)
 end
 

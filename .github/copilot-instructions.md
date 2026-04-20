@@ -214,14 +214,11 @@ htdocs/luci-static/resources/mynet/
   css/mynet.css
   js/mynet.js             前端：mnApi / mnNodeSwitch / mnNodeGenKey 等
 
-scripts/_src/             平台脚本源码（开发时编辑这里）
-  common/                 跨平台工具（bash 语法，非 OpenWrt sh）
-  openwrt/
-    service-manager.sh    手动部署/升级用（需 bash）
-    runtime/
-      rc.mynet            → /etc/init.d/mynet（init 脚本）
-      route.mynet         → /etc/mynet/scripts/route.mynet（路由管理）
-      firewall.mynet      → /etc/mynet/scripts/firewall.mynet（防火墙管理）
+scripts/
+  runtime/                OpenWrt 运行时脚本源码（开发时编辑这里）
+    rc.mynet              → /etc/init.d/mynet（init 脚本）
+    route.mynet           → /etc/mynet/scripts/route.mynet（路由管理）
+    firewall.mynet        → /etc/mynet/scripts/firewall.mynet（防火墙管理）
 
 root/etc/mynet/conf/config.json   设备本地配置
 ```

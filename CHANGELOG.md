@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.1.5 (2026-04-21)
+
+### Bug Fixes
+- **node.lua: BusyBox sleep 不支持小数** — `wait_for_iface()` 中 `sleep 0.3` × 15 次改为 `sleep 1` × 5 次（等效超时不变），`restart_service()` 中 `sleep 0.5` 同步修正，避免 BusyBox 报 `invalid number`
+- **proxy.lua: net_check() shell_escape 逻辑矛盾** — `util.shell_escape(host):gsub("'","")` 等价于不做任何保护（包裹后即剥除），修正为直接使用 `host`（已有 `^[%w%.%-]+$` 入口校验保证安全）
+
+### Code Quality
+- **controller.lua: 提取 `gnb_ctl_query()` 辅助函数** — `action_node()` / `action_service()` / `api_dashboard_stats()` / `api_gnb_monitor_data()` 中 4 处相同的 `cd ... && ./bin/gnb_ctl -s -b` 命令合并为单一私有函数
+- **controller.lua: 删除 `action_proxy()` 局部变量遮蔽** — 函数内重复 `local node_m/cfg_m = require(...)` 与模块级同名变量冲突，已删除冗余声明
+- **controller.lua: 删除死代码** — `action_service_op()` 的 `network` 分支中 `svc_status/svc_start/svc_stop/svc_restart` 操作不可达（已被 `mynet` 分支覆盖），予以移除
+- **system.lua: 合并 `_handle_heartbeat_commands()` 重复 require** — 循环内 6 个分支各自 `require("luci.model.mynet.node")` 合并为循环外一次加载
+- **版本号对齐** — `util.APP_VERSION` 从 `2.1.0` 更新至 `2.1.5`
+
+### Removed
+- `docs/UPGRADE_PLAN.md` — 升级阶段均已完成
+- `docs/UPGRADE-v2.md` — v1→v2 迁移已完成
+- `docs/TEST_REPORT.md` — 已被 TEST_REPORT_E2E_20260419.md 取代
+- `docs/MACOS_GATEWAY_PLAN.md` / `docs/MacOS_Openwrt_IPSET_Proxy.md` — macOS 开发环境文档与 OpenWrt 插件无关
+
 ## v2.1.4 (2026-04-20)
 
 ### Bug Fixes

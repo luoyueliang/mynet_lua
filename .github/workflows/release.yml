@@ -71,24 +71,23 @@ jobs:
             "${DATA_ROOT}/etc/mynet/conf/config.json"
 
           # Init script
-          install -Dm755 scripts/_src/openwrt/runtime/rc.mynet \
+          install -Dm755 scripts/runtime/rc.mynet \
             "${DATA_ROOT}/etc/init.d/mynet"
 
           # Runtime scripts
-          install -Dm755 scripts/_src/openwrt/runtime/route.mynet \
+          install -Dm755 scripts/runtime/route.mynet \
             "${DATA_ROOT}/etc/mynet/scripts/route.mynet"
-          install -Dm755 scripts/_src/openwrt/runtime/firewall.mynet \
+          install -Dm755 scripts/runtime/firewall.mynet \
             "${DATA_ROOT}/etc/mynet/scripts/firewall.mynet"
 
           # Proxy scripts
           mkdir -p "${DATA_ROOT}/etc/mynet/scripts/proxy/hooks"
-          mkdir -p "${DATA_ROOT}/etc/mynet/scripts/proxy/openwrt"
           install -m755 scripts/proxy/proxy.sh \
             "${DATA_ROOT}/etc/mynet/scripts/proxy/"
           install -m755 scripts/proxy/hooks/*.sh \
             "${DATA_ROOT}/etc/mynet/scripts/proxy/hooks/"
-          install -m755 scripts/proxy/openwrt/route_policy.sh \
-            "${DATA_ROOT}/etc/mynet/scripts/proxy/openwrt/"
+          install -m755 scripts/proxy/route_policy.sh \
+            "${DATA_ROOT}/etc/mynet/scripts/proxy/"
 
           # Tools
           mkdir -p "${DATA_ROOT}/etc/mynet/scripts/tools"

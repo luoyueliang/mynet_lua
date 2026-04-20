@@ -315,6 +315,18 @@ local function get_mynetd_status()
     return sys_m.get_mynetd_status()
 end
 
+-- 查询 gnb peer 状态（运行 gnb_ctl -s），返回 nodes 列表和原始输出
+-- 文件不存在时返回 nil, nil
+local function gnb_ctl_query(node_id)
+    local root    = util.GNB_DRIVER_ROOT
+    local ctl     = root .. "/bin/gnb_ctl"
+    local mapfile = util.GNB_CONF_DIR .. "/" .. util.int_str(node_id) .. "/gnb.map"
+    if not util.file_exists(ctl) or not util.file_exists(mapfile) then return nil, nil end
+    local out = util.exec("cd '" .. root .. "' && ./bin/gnb_ctl -s -b 'conf/"
+        .. util.int_str(node_id) .. "/gnb.map' 2>&1") or ""
+    return sys_m.parse_gnb_nodes(out), out
+end
+
 -- 服务启动错误 → 用户友好的提示 + 操作引导
 local function _svc_error_hint(detail, op)
     if not detail or detail == "" then
@@ -631,17 +643,10 @@ function action_node()
         peer_count           = #peer_keys
 
         -- 获取活跃对端数量
-        local gnb_ctl = util.GNB_DRIVER_ROOT .. "/bin/gnb_ctl"
-        local gnb_map = util.GNB_CONF_DIR .. "/" .. util.int_str(node_id) .. "/gnb.map"
-        if util.file_exists(gnb_ctl) and util.file_exists(gnb_map) then
-            local cmd = "cd '" .. util.GNB_DRIVER_ROOT .. "' && ./bin/gnb_ctl -s -b 'conf/"
-                .. util.int_str(node_id) .. "/gnb.map' 2>&1"
-            local output = util.exec(cmd) or ""
-            local gnb_nodes = sys_m.parse_gnb_nodes(output)
-            for _, n in ipairs(gnb_nodes) do
-                if not n.is_local and (n.conn_status == "Direct" or n.conn_status == "InDirect") then
-                    active_count = active_count + 1
-                end
+        local gnb_nodes = gnb_ctl_query(node_id) or {}
+        for _, n in ipairs(gnb_nodes) do
+            if not n.is_local and (n.conn_status == "Direct" or n.conn_status == "InDirect") then
+                active_count = active_count + 1
             end
         end
     end
@@ -950,9 +955,9 @@ function action_service()
         elseif not gnb_map_path or not util.file_exists(gnb_map_path) then
             gnb_err = gnb_map_path and ("gnb.map not found: " .. gnb_map_path) or "No node_id configured"
         else
-            local cmd = "cd '" .. gnb_root .. "' && ./bin/gnb_ctl -s -b 'conf/" .. util.int_str(node_id) .. "/gnb.map' 2>&1"
-            gnb_raw   = util.exec(cmd) or ""
-            gnb_nodes = sys_m.parse_gnb_nodes(gnb_raw)
+            gnb_nodes, gnb_raw = gnb_ctl_query(node_id)
+            gnb_nodes = gnb_nodes or {}
+            gnb_raw   = gnb_raw or ""
         end
     end
 
@@ -1116,11 +1121,6 @@ function action_service_op()
             else
                 err_msg = "未知的 NAT 类型"
             end
-        elseif op == "svc_status" or op == "svc_start" or op == "svc_stop" or op == "svc_restart" then
-            local cmd_map = { svc_status="status", svc_start="start", svc_stop="stop", svc_restart="restart" }
-            local out, code = util.exec_status("/etc/init.d/mynet " .. cmd_map[op] .. " 2>&1")
-            ok_msg = util.trim(out or "")
-            if code ~= 0 then err_msg = ok_msg; ok_msg = nil end
         elseif op == "fw_setup" then
             local fw_ok, fw_msg = sys_m.ensure_firewall_zone()
             if fw_ok then
@@ -1693,14 +1693,7 @@ function api_dashboard_stats()
     -- 快速 gnb peer 查询
     local peer_nodes = {}
     if node_id and util.int_str(node_id) ~= "0" then
-        local gnb_ctl = util.GNB_DRIVER_ROOT .. "/bin/gnb_ctl"
-        local gnb_map = util.GNB_CONF_DIR .. "/" .. util.int_str(node_id) .. "/gnb.map"
-        if util.file_exists(gnb_ctl) and util.file_exists(gnb_map) then
-            local cmd = "cd '" .. util.GNB_DRIVER_ROOT .. "' && ./bin/gnb_ctl -s -b 'conf/"
-                .. util.int_str(node_id) .. "/gnb.map' 2>&1"
-            local output = util.exec(cmd) or ""
-            peer_nodes = sys_m.parse_gnb_nodes(output)
-        end
+        peer_nodes = gnb_ctl_query(node_id) or {}
     end
 
     json_ok({
@@ -1919,9 +1912,7 @@ function api_gnb_monitor_data()
         return
     end
 
-    local cmd = "cd '" .. gnb_root .. "' && ./bin/gnb_ctl -s -b 'conf/" .. util.int_str(node_id) .. "/gnb.map' 2>&1"
-    local output = util.exec(cmd) or ""
-    local nodes  = sys_m.parse_gnb_nodes(output)
+    local nodes = gnb_ctl_query(node_id) or {}
 
     -- 序列化供 JSON（latency 转 ms）
     local result = {}
@@ -2027,8 +2018,6 @@ function action_proxy()
     local z       = zone_ctx()
 
     -- 获取本地对端节点列表供 peer 下拉选择
-    local node_m  = require("luci.model.mynet.node")
-    local cfg_m   = require("luci.model.mynet.config")
     local node_id = cfg_m.get_node_id()
     local peers   = {}
     if node_id then

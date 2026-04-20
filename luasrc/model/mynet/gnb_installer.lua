@@ -136,9 +136,9 @@ local function detect_fpu_from_cpuinfo()
     return "soft"
 end
 
--- detect_platform: 检测运行平台，返回 { uname_m, fpu, gnb_arch, os_name }
+-- detect_openwrt_target: 检测 OpenWrt 运行目标，返回 { uname_m, fpu, gnb_arch, os_name }
 -- gnb_arch 格式与 GNB release 包名匹配（如 aarch64、armv7-hardfp、mipsel-softfp）
-function M.detect_platform()
+function M.detect_openwrt_target()
     local res = { uname_m = "", fpu = "none", gnb_arch = "", os_name = "linux" }
 
     res.uname_m = util.trim(util.exec("uname -m 2>/dev/null") or "")
@@ -257,7 +257,7 @@ end
 
 -- get_status: 返回安装状态（供 api_gnb_install_status 使用）
 function M.get_status()
-    local plat    = M.detect_platform()
+    local plat    = M.detect_openwrt_target()
     local gnb_ok  = M.check_gnb_exists()
     local running = M.is_install_running()
     local log_out = util.trim(util.exec("tail -40 " .. M.LOG_FILE .. " 2>/dev/null") or "")
@@ -588,10 +588,10 @@ function M.start_auto_install(opts)
         return { ok = true, status = "already_running", message = "install already in progress" }
     end
 
-    -- 3. 检测平台
-    local plat = M.detect_platform()
+    -- 3. 检测 OpenWrt 运行目标
+    local plat = M.detect_openwrt_target()
     if plat.gnb_arch == "" then
-        return { ok = false, status = "error", message = "could not detect platform arch (uname_m=" .. (plat.uname_m or "") .. ")" }
+        return { ok = false, status = "error", message = "could not detect OpenWrt target arch (uname_m=" .. (plat.uname_m or "") .. ")" }
     end
 
     -- 3.5 依赖预检与预装

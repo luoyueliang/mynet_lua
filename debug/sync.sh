@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 PKG_NAME="luci-app-mynet"
-PKG_VERSION="2.1.3"
+PKG_VERSION="2.1.5"
 PKG_RELEASE="1"
 BUILD_DIR="$PROJECT_DIR/build"
 IPK_FILE="$BUILD_DIR/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_all.ipk"
@@ -67,7 +67,7 @@ build_ipk() {
 
     # --- Init script ---
     install -d "$data_dir/etc/init.d"
-    install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/runtime/rc.mynet" \
+    install -m 0755 "$PROJECT_DIR/scripts/runtime/rc.mynet" \
         "$data_dir/etc/init.d/mynet"
 
     # --- Proxy scripts ---
@@ -80,9 +80,8 @@ build_ipk() {
         "$data_dir/etc/mynet/scripts/proxy/hooks/"
     install -m 0755 "$PROJECT_DIR/scripts/proxy/hooks/stop.sh" \
         "$data_dir/etc/mynet/scripts/proxy/hooks/"
-    install -d "$data_dir/etc/mynet/scripts/proxy/openwrt"
-    install -m 0755 "$PROJECT_DIR/scripts/proxy/openwrt/route_policy.sh" \
-        "$data_dir/etc/mynet/scripts/proxy/openwrt/"
+    install -m 0755 "$PROJECT_DIR/scripts/proxy/route_policy.sh" \
+        "$data_dir/etc/mynet/scripts/proxy/"
 
     # --- Tools ---
     install -d "$data_dir/etc/mynet/scripts/tools"
@@ -104,9 +103,9 @@ build_ipk() {
         "$data_dir/usr/bin/mynet-heartbeat"
 
     # --- Deploy route.mynet / firewall.mynet to scripts/ (fixed path) ---
-    install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/runtime/route.mynet" \
+    install -m 0755 "$PROJECT_DIR/scripts/runtime/route.mynet" \
         "$data_dir/etc/mynet/scripts/"
-    install -m 0755 "$PROJECT_DIR/scripts/_src/openwrt/runtime/firewall.mynet" \
+    install -m 0755 "$PROJECT_DIR/scripts/runtime/firewall.mynet" \
         "$data_dir/etc/mynet/scripts/"
 
     # --- Runtime directories ---

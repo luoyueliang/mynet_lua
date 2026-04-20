@@ -58,7 +58,7 @@
 ### Bug 6: rc.mynet stop() 不杀 gnb_es / 不删 TUN (High)
 - **症状**: init.d restart 后 start 检测到残留 PID/接口，报"abnormal state"拒绝启动
 - **修复**: 在 stop() gnb case 末尾添加 `pkill -x gnb_es` + `ip link del $VPN_INTERFACE`
-- **文件**: `scripts/_src/openwrt/runtime/rc.mynet` L580+
+- **文件**: `scripts/runtime/rc.mynet` L580+
 
 ### Bug 7: `pgrep -x gnb` 在 BusyBox 上不匹配 (Critical)
 - **症状**: 初始 Bug 1 修复 (`pgrep gnb` → `pgrep -x gnb`) 在 BusyBox 上无效
@@ -236,7 +236,7 @@ init.d (rc.mynet) 正确设置了该变量。
 | 文件 | 修改内容 |
 |------|---------|
 | `luasrc/model/mynet/node.lua` | Bug 1-5,7 修复: pidof/killall/ip_network_base/address_conf warning/TUN cleanup |
-| `scripts/_src/openwrt/runtime/rc.mynet` | Bug 6 修复: stop() 添加 gnb_es kill + TUN 接口清理 |
+| `scripts/runtime/rc.mynet` | Bug 6 修复: stop() 添加 gnb_es kill + TUN 接口清理 |
 
 ---
 
