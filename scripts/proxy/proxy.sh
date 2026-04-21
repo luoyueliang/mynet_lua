@@ -58,10 +58,15 @@ generate_proxy_config() {
 
     # 检查是否需要重新生成（--force 跳过）
     if [ "$force" != "--force" ] && [ -f "$PROXY_CONF_DIR/proxy_route.conf" ]; then
-        local src_mt dst_mt
+        local src_mt dst_mt cached_gw
         src_mt=$(stat -c %Y "$src_file" 2>/dev/null || stat -f %m "$src_file" 2>/dev/null || echo 0)
         dst_mt=$(stat -c %Y "$PROXY_CONF_DIR/proxy_route.conf" 2>/dev/null || stat -f %m "$PROXY_CONF_DIR/proxy_route.conf" 2>/dev/null || echo 0)
-        [ "$dst_mt" -ge "$src_mt" ] && { echo "[INFO] proxy_route.conf 已是最新，跳过"; return 0; }
+        cached_gw=$(grep "^# Gateway:" "$PROXY_CONF_DIR/proxy_route.conf" 2>/dev/null | head -1 | sed 's/^# Gateway: //')
+        # IP 列表未变 且 网关未变 → 跳过；peer 改变时网关会变，必须重新生成
+        if [ "$dst_mt" -ge "$src_mt" ] && [ "$cached_gw" = "$gateway" ]; then
+            echo "[INFO] proxy_route.conf 已是最新，跳过"; return 0
+        fi
+        [ "$cached_gw" != "$gateway" ] && echo "[INFO] 网关已变更 ($cached_gw → $gateway)，重新生成"
     fi
 
     mkdir -p "$PROXY_CONF_DIR"
