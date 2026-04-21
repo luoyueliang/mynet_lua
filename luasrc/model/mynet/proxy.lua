@@ -280,6 +280,29 @@ function M.remove_plugin_hooks()
     end
 end
 
+function M.pre_start()
+    local cfg = M.load_config()
+    if not cfg.proxy_enabled then
+        return true, "proxy disabled"
+    end
+
+    if (cfg.proxy_mode == "client" or cfg.proxy_mode == "both")
+        and util.trim(cfg.proxy_peers or "") == "" then
+        return nil, "PROXY_ENABLED=1 but PROXY_PEERS is empty"
+    end
+
+    local injected, err = M.route_inject()
+    if not injected then
+        return nil, "route inject failed: " .. (err or "unknown error")
+    end
+
+    return true, string.format(
+        "route injection ensured (client=%d server=%d)",
+        injected.injected_client or 0,
+        injected.injected_server or 0
+    )
+end
+
 -- ─────────────────────────────────────────────────────────────
 -- 策略路由运行参数（Lua 计算后写入 params 文件，供 shell 脚本使用）
 -- ─────────────────────────────────────────────────────────────

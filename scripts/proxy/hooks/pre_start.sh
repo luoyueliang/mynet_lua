@@ -2,11 +2,8 @@
 #
 # Proxy plugin — pre_start hook
 # Called by rc.mynet before GNB starts.
-# Non-blocking: just logs config readiness.
+# Ensures GNB route.conf proxy injection is present before GNB starts.
 #
-
-ROLE_CONF="$MYNET_HOME/conf/proxy/proxy_role.conf"
-PROXY_SH="$MYNET_HOME/scripts/proxy/proxy.sh"
 
 log_proxy() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [proxy/pre_start] $1"; }
 
@@ -15,28 +12,26 @@ if [ -z "$MYNET_HOME" ] || [ ! -d "$MYNET_HOME" ]; then
     exit 0
 fi
 
-if [ ! -f "$ROLE_CONF" ]; then
-    log_proxy "proxy_role.conf not found — proxy disabled"
-    exit 0
+if ! command -v lua >/dev/null 2>&1; then
+    log_proxy "ERROR: lua runtime not found"
+    exit 1
 fi
 
-# Source bash K=V config
-. "$ROLE_CONF"
+log_proxy "ensuring proxy route injection before GNB start"
+MYNET_HOME="$MYNET_HOME" lua <<'LUA' 2>&1 || {
+local proxy = require("luci.model.mynet.proxy")
+local ok, msg = proxy.pre_start()
+if not ok then
+    io.stderr:write((msg or "proxy.pre_start failed") .. "\n")
+    os.exit(1)
+end
+if msg and msg ~= "" then
+    io.stdout:write(msg .. "\n")
+end
+LUA
+    log_proxy "ERROR: proxy.pre_start failed (exit $?)"
+    exit 1
+}
 
-if [ "$PROXY_ENABLED" != "1" ]; then
-    log_proxy "PROXY_ENABLED != 1 — skipping"
-    exit 0
-fi
-
-if [ -z "$PROXY_PEERS" ]; then
-    log_proxy "WARNING: PROXY_ENABLED=1 but PROXY_PEERS is empty"
-    exit 0
-fi
-
-if [ ! -x "$PROXY_SH" ] && [ ! -f "$PROXY_SH" ]; then
-    log_proxy "WARNING: proxy.sh not found at $PROXY_SH"
-    exit 0
-fi
-
-log_proxy "proxy config OK: mode=$PROXY_MODE region=$NODE_REGION peers=$PROXY_PEERS"
+log_proxy "proxy pre_start completed"
 exit 0
