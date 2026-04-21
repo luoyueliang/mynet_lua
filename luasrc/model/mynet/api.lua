@@ -21,6 +21,7 @@ local function do_curl(method, url, json_body, extra_headers, accept_type, timeo
         "curl", "-s",
         "-w", "'\n__STATUS:%{http_code}'",
         "-m", tostring(t),
+        "--noproxy", "'api.mynet.club,ctl.mynet.club,mynet.club,github.com'",
         "-X", method,
     }
 
