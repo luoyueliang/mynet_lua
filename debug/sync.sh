@@ -155,6 +155,14 @@ rm -rf /etc/mynet/scripts/_src
 pkill -x mynetd 2>/dev/null || true
 # Enable and load tun module
 modprobe tun 2>/dev/null
+# Sync proxy hooks -> plugin/proxy/ (rc.mynet calls scripts/plugin/<plugin>/<hook>.sh)
+mkdir -p /etc/mynet/scripts/plugin/proxy
+for _h in pre_start post_start stop; do
+    _src="/etc/mynet/scripts/proxy/hooks/${_h}.sh"
+    _dst="/etc/mynet/scripts/plugin/proxy/${_h}.sh"
+    [ -f "$_src" ] && cp -f "$_src" "$_dst" && chmod 0755 "$_dst"
+done
+unset _h _src _dst
 # Install firewall zone (creates network.mynet + zone + forwarding, no device binding yet)
 MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/firewall.mynet install 2>/dev/null
 # Clear LuCI cache
