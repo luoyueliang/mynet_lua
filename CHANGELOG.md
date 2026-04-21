@@ -1,6 +1,24 @@
 # Changelog
 
-## v2.1.6 (2026-04-21)
+## v2.1.7 (2026-04-21)
+
+### Refactor
+- **proxy: 明确分离 enable/disable 与 start/stop 语义**
+  - `enable/disable`：配置层 — 负责写 proxy_role.conf、注入/移除 GNB route.conf 、安装/移除 plugin hooks
+  - `start/stop`：运行层 — 只操作 nftables/ip rules，不走 route.conf
+  - `reload`：用已有 IP 文件重生配置，不触发网络下载
+- **proxy: start/stop/enable/disable 全面幂等优化**
+  - `start()`：已运行 → `"already running"` 直接返回
+  - `start()`：未 enable 则拒绝并返回明确错误 `"proxy not enabled — call enable() first"`
+  - `stop()`：未运行 → `"already stopped"` 直接返回
+  - `disable()`：未 enabled → `"already disabled"` 直接返回
+  - `enable()`：已 enabled 且参数未变且 route 已注入 → 跳过 route_inject（避免重复写入 GNB route.conf）
+
+### Added
+- **打包内置 IP 列表**：ipk 随包预装 `interip.txt`（17809 条）和 `chinaip.txt`（8324 条），首次安装无需网络下载
+
+### Bug Fixes
+- **proxy.sh: 缓存跳过时未检测网关 IP 变更** — 仅比较 IP 文件 mtime 而忽略 peer 变更导致的网关 IP 变更，现在同时比较 `# Gateway:` 注释，不一致则强制重生
 
 ### Bug Fixes
 - **node.lua: route.conf 路由格式修正** — `generate_route_conf()` 输出从 `cidr via peer_vip`（内核报 "Nexthop has invalid gateway"）改为 `cidr dev vpn_iface`，修复 5 条跨 zone 子网路由无法添加的问题

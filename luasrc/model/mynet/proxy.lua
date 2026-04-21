@@ -190,15 +190,29 @@ function M.enable(opts)
     if opts.dns_mode    then fields.dns_mode     = opts.dns_mode end
     if opts.dns_server  then fields.dns_server   = opts.dns_server end
     if opts.proxy_peers then fields.proxy_peers  = opts.proxy_peers end
+
+    -- 幂等检查：若已 enabled 且参数未变、route 已注入，则仅确保 start
+    local current = M.load_config()
+    local params_changed = (
+        (opts.mode        and opts.mode        ~= current.proxy_mode)  or
+        (opts.region      and opts.region      ~= current.node_region) or
+        (opts.dns_mode    and opts.dns_mode    ~= current.dns_mode)    or
+        (opts.proxy_peers and opts.proxy_peers ~= current.proxy_peers)
+    )
+    local already_injected = M.route_inject_status().injected
+    local skip_inject = current.proxy_enabled and already_injected and not params_changed
+
     M.update_config(fields)
 
     -- 安装 plugin hook symlink / 部署
     M.install_plugin_hooks()
 
     -- 注入 GNB route.conf（数据层放行，enable/disable 负责；stop/start 不触碰 route.conf）
-    local inj_ok, inj_msg = M.route_inject()
-    if not inj_ok then
-        util.log_warn("enable route_inject skipped: " .. (inj_msg or ""))
+    if not skip_inject then
+        local inj_ok, inj_msg = M.route_inject()
+        if not inj_ok then
+            util.log_warn("enable route_inject skipped: " .. (inj_msg or ""))
+        end
     end
 
     -- 若 GNB 已运行，立即启动 proxy
@@ -213,10 +227,16 @@ function M.enable(opts)
         return true, "enabled and started"
     end
 
-    return true, "enabled (GNB not running, will auto-start with GNB)"
+    return true, skip_inject and "already enabled" or "enabled (GNB not running, will auto-start with GNB)"
 end
 
 function M.disable()
+    -- 幂等检查：已 disabled 则直接返回
+    local cfg = M.load_config()
+    if not cfg.proxy_enabled then
+        return true, "already disabled"
+    end
+
     -- 若 proxy 运行中，先停止
     local st = M.get_status()
     if st and st.running then
@@ -349,6 +369,18 @@ end
 function M.start(opts)
     opts = opts or {}
     local current    = M.load_config()
+
+    -- 前置检查：必须先 enable
+    if not current.proxy_enabled then
+        return nil, "proxy not enabled — call enable() first"
+    end
+
+    -- 前置检查：已运行则直接返回（幂等）
+    local st = M.get_status()
+    if st and st.running then
+        return true, "already running"
+    end
+
     local mode       = opts.mode       or current.proxy_mode  or "client"
     local region     = opts.region     or current.node_region or "domestic"
     local dns_mode   = opts.dns_mode   or current.dns_mode    or "none"
@@ -441,6 +473,12 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function M.stop()
+    -- 幂等检查：未运行则直接返回
+    local st = M.get_status()
+    if not (st and st.running) then
+        return true, "already stopped"
+    end
+
     -- 调用 route_policy.sh stop（处理所有层：DNS / Server / 策略路由）
     -- 注意：stop 不恢复 GNB route.conf，route_restore 只由 disable 负责
     local rp_env = "MYNET_HOME=" .. util.shell_escape(util.MYNET_HOME) .. " "
