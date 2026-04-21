@@ -310,52 +310,60 @@ function M.collect_router_info(node_id)
     info.wan_iface = wan_iface ~= "" and wan_iface or nil
     info.routing_mode = (wan_iface ~= "") and "主路由 (Gateway)" or "旁路由 (Bypass)"
 
-    -- ── WAN IP ──
-    if info.wan_iface then
-        info.wan_ip = util.trim(util.exec(
-            "ip addr show " .. info.wan_iface
-            .. " 2>/dev/null | awk '/inet /{print $2}' | head -1") or "")
+    -- ── 一次 ip addr 获取所有接口 IP（替代多次 ip addr show X）──
+    local addr_out = util.exec("ip addr 2>/dev/null") or ""
+    local iface_ips = {}   -- { [iface] = "x.x.x.x/prefix" }
+    local cur_iface = nil
+    for line in (addr_out .. "\n"):gmatch("([^\n]+)\n") do
+        local iface = line:match("^%d+: ([^:@ ]+)")
+        if iface then
+            cur_iface = iface
+        elseif cur_iface then
+            local ip = line:match("inet (%S+)")
+            if ip and not iface_ips[cur_iface] then
+                iface_ips[cur_iface] = ip
+            end
+        end
     end
-    if info.wan_ip == "" then info.wan_ip = nil end
 
-    -- ── LAN ──
+    -- WAN IP
+    if info.wan_iface then
+        info.wan_ip = iface_ips[info.wan_iface]
+    end
+
+    -- LAN IP（优先 UCI，回落 ip addr）
     info.lan_ip = uci_get("network.lan.ipaddr")
     if info.lan_ip == "" then
-        info.lan_ip = util.trim(util.exec(
-            "ip addr show br-lan 2>/dev/null | awk '/inet /{print $2}' | head -1") or "")
+        local cidr = iface_ips["br-lan"]
+        info.lan_ip = cidr and cidr:match("([^/]+)") or nil
     end
     if info.lan_ip == "" then info.lan_ip = nil end
 
-    -- ── 默认网关 ──
-    info.gateway = util.trim(util.exec(
-        "ip route show default 2>/dev/null | head -1"
-        .. " | awk '{for(i=1;i<NF;i++){if($i==\"via\") print $(i+1)}}'") or "")
-    if info.gateway == "" then info.gateway = nil end
-
-    -- ── VPN 接口 ──
+    -- VPN 接口（优先 UCI，回落从 iface_ips 找 gnb_tun*）
     info.vpn_iface = uci_get("network.mynet.device")
     if info.vpn_iface == "" then info.vpn_iface = uci_get("network.mynet.ifname") end
     if info.vpn_iface == "" then
-        info.vpn_iface = util.trim(util.exec(
-            "ip addr 2>/dev/null | awk '/^[0-9]+:.*gnb_tun/{gsub(\":\",\"\",$2); print $2}' | head -1") or "")
+        for iface in pairs(iface_ips) do
+            if iface:match("^gnb_tun") then info.vpn_iface = iface; break end
+        end
     end
     if info.vpn_iface == "" then info.vpn_iface = nil end
 
-    -- ── VPN 接口 IP（tun 地址）──
+    -- VPN IP
     if info.vpn_iface then
-        info.vpn_ip = util.trim(util.exec(
-            "ip addr show " .. info.vpn_iface
-            .. " 2>/dev/null | awk '/inet /{print $2}' | head -1") or "")
-        if info.vpn_ip == "" then info.vpn_ip = nil end
+        info.vpn_ip = iface_ips[info.vpn_iface]
     end
 
-    -- ── 路由计数 ──
+    -- ── 一次 ip route show 获取网关 + 路由计数（替代两条独立调用）──
     local routes_out = util.exec("ip route show 2>/dev/null") or ""
     local total, vpn_routes = 0, 0
     local vpn_dev = info.vpn_iface or "__none__"
     for line in (routes_out .. "\n"):gmatch("([^\n]+)\n") do
         if line:match("%S") then
             total = total + 1
+            if line:match("^default ") and not info.gateway then
+                info.gateway = line:match("via (%S+)")
+            end
             if line:find("dev mynet") or line:find("dev wg0")
                or line:find("dev " .. vpn_dev) then
                 vpn_routes = vpn_routes + 1

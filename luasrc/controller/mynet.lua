@@ -135,6 +135,7 @@ function index()
 
     -- AJAX / JSON API
     entry({"admin", "services", "mynet", "api", "status"},        call("api_get_status")         ).dependent = false
+    entry({"admin", "services", "mynet", "api", "node_info"},      call("api_get_node_info")       ).dependent = false
     entry({"admin", "services", "mynet", "api", "nodes"},          call("api_get_nodes")           ).dependent = false
     entry({"admin", "services", "mynet", "api", "zones"},          call("api_get_zones")           ).dependent = false
     entry({"admin", "services", "mynet", "api", "vpn_start"},      call("api_vpn_start")           ).dependent = false
@@ -436,8 +437,18 @@ function action_index()
     local gnb_bin_path  = cfg_m.get_gnb_bin()
     local gnb_version   = ""
     if util.file_exists(gnb_bin_path) then
-        -- GNB 无参数运行时第一行输出: "GNB version Dev X.Y.Z  protocol version X.Y.Z"
-        gnb_version = util.trim(util.exec(gnb_bin_path .. " 2>&1 | head -1") or "")
+        -- 版本缓存到 /tmp（TTL 1小时），避免每次 dashboard 都启动 GNB 进程
+        local _vcache = "/tmp/mynet_gnb_ver.cache"
+        local _vc = util.trim(util.read_file(_vcache) or "")
+        local _vts, _vstr = _vc:match("^(%d+) (.+)$")
+        if _vstr and (os.time() - (tonumber(_vts) or 0)) < 3600 then
+            gnb_version = _vstr
+        else
+            gnb_version = util.trim(util.exec(gnb_bin_path .. " 2>&1 | head -1") or "")
+            if gnb_version ~= "" then
+                util.write_file(_vcache, tostring(os.time()) .. " " .. gnb_version)
+            end
+        end
     end
     local gnb_uptime = ""
     if node_id and router_info and router_info.gnb_pid then
@@ -472,12 +483,8 @@ function action_index()
         end
     end
 
-    -- 节点详细信息（IP, 网卡, 防火墙zone）
-    local node_info = nil
-    local node_err  = nil
-    if node_id and util.int_str(node_id) ~= "0" and not is_guest then
-        node_info, node_err = node_m.get_single_node(node_id)
-    end
+    -- 节点详细信息 → 改为异步 API（api_get_node_info），页面加载后由 JS 拉取
+    -- 不在此处做同步 HTTPS 请求，避免阻塞页面渲染
 
     -- 防火墙信息 + 依赖 + 健康检查
     local fw_info = (router_info and router_info.firewall) and router_info.firewall or sys_m.collect_firewall_info()
@@ -498,8 +505,8 @@ function action_index()
         gnb_bin_path  = gnb_bin_path,
         gnb_version   = gnb_version,
         gnb_uptime    = gnb_uptime,
-        node_info     = node_info,
-        node_err      = node_err,
+        node_info     = nil,
+        node_err      = nil,
         health_issues = health_issues,
     })
 end
@@ -1225,6 +1232,45 @@ function api_get_status()
         zone       = cfg_m.load_current_zone(),
         node_id    = node_id,
     })
+end
+
+-- 异步拉取节点详情（Name / Virtual IP），带 5 分钟文件缓存
+-- 仅在线模式（非 guest）才调用远程 API
+function api_get_node_info()
+    if not require_local_api() then return end
+
+    -- guest/local 模式不走远程 API
+    local c = auth_or_local()
+    if c.guest then
+        json_ok({ success = false, message = "guest mode" }); return
+    end
+
+    local node_id = cfg_m.get_node_id()
+    if not node_id or node_id == "0" then
+        json_ok({ success = false, message = "node_id not configured" }); return
+    end
+
+    local cache_file = "/tmp/mynet_node_info_" .. node_id .. ".cache"
+    local cached_raw = util.read_file(cache_file) or ""
+    local ts_str, json_str = cached_raw:match("^(%d+)\n(.+)$")
+    if json_str and (os.time() - (tonumber(ts_str) or 0)) < 300 then
+        -- 缓存未过期，直接返回
+        http.prepare_content("application/json")
+        http.write(json_str)
+        return
+    end
+
+    -- 缓存过期或不存在，调用远程 API
+    local info, err = node_m.get_single_node(node_id)
+    if err or not info then
+        json_ok({ success = false, message = err or "fetch failed" }); return
+    end
+
+    local resp = { success = true, data = info }
+    local resp_json = util.json_encode(resp)
+    util.write_file(cache_file, tostring(os.time()) .. "\n" .. resp_json)
+    http.prepare_content("application/json")
+    http.write(resp_json)
 end
 
 function api_get_nodes()

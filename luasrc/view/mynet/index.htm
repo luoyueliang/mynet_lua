@@ -144,15 +144,14 @@
                     <% end %>
                 </td>
             </tr>
-            <% if node_info then %>
-            <tr class="tr">
+            <!-- 节点名/VIP 异步加载（仅在线模式） -->
+            <% if not is_guest and node_id and tostring(node_id) ~= "0" then %>
+            <tbody id="mn-node-info-rows">
+            <tr class="tr" id="mn-node-info-loading">
                 <th class="th"><%:Name%></th>
-                <td class="td" style="text-align:center"><%=pcdata(node_info.node_name or node_info.name or "—")%></td>
+                <td class="td mn-muted" style="text-align:center">…</td>
             </tr>
-            <tr class="tr">
-                <th class="th"><%:Virtual IP%></th>
-                <td class="td" style="text-align:center"><code><%=pcdata(node_info.virtual_ip or "—")%></code></td>
-            </tr>
+            </tbody>
             <% end %>
             <% if not is_guest then %>
             <tr class="tr">
@@ -277,6 +276,27 @@
             function(err) { btn.disabled = false; mnShowToast(err, 'error'); }
         );
     };
+    /* 异步加载节点 Name / Virtual IP */
+    function mnLoadNodeInfo() {
+        var tbody = document.getElementById('mn-node-info-rows');
+        if (!tbody) return;
+        mnFetch(_mnApiBase() + 'node_info', 'GET', null,
+            function(data) {
+                if (!data.success || !data.data) { tbody.style.display = 'none'; return; }
+                var d = data.data;
+                var name = d.node_name || d.name || '—';
+                var vip  = d.virtual_ip || '';
+                var html = '<tr class="tr"><th class="th"><%:Name%></th>'
+                         + '<td class="td" style="text-align:center">' + _esc(name) + '</td></tr>';
+                if (vip) {
+                    html += '<tr class="tr"><th class="th"><%:Virtual IP%></th>'
+                          + '<td class="td" style="text-align:center"><code>' + _esc(vip) + '</code></td></tr>';
+                }
+                tbody.innerHTML = html;
+            },
+            function() { tbody.style.display = 'none'; }
+        );
+    }
     </script>
 
     <div id="mn-toast" class="mn-toast mn-hidden"></div>
@@ -287,6 +307,7 @@
         setInterval(function () { mnRefreshStatus(); }, 15000);
         document.addEventListener('DOMContentLoaded', function () {
             mnAutoInstallGnb();
+            mnLoadNodeInfo();
         });
     </script>
     <%+footer%>
