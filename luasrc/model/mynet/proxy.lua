@@ -769,32 +769,47 @@ function M.route_inject()
     local clean = strip_marker_section(orig)
     clean = strip_server_section(clean)
 
-    local total_client = 0
-    local total_server = 0
-    local appended = ""
+    -- ── 按 nodeId 分组插入 ──
+    -- GNB route.conf 按 nodeId 分组，proxy 路由必须紧跟对应节点的内核路由之后，
+    -- 保持同一 nodeId 的路由连续。
+    -- server 段（自身节点 nid_str）插入到自身节点路由分组末尾。
+    -- client 段（各 proxy peer nodeId）插入到对应 peer 节点路由分组末尾。
+    -- 如果 route.conf 中找不到对应 nodeId 的路由，则追加到末尾。
 
-    -- ── Client/Both: 为每个 proxy_peer 注入出口路由 ──
-    if (proxy_mode == "client" or proxy_mode == "both") and proxy_peers ~= "" then
+    -- 将 clean 内容按行分割，逐行处理，在目标 nodeId 最后一条路由后插入
+    local function insert_after_node(content, target_nid, inject_block)
         local lines = {}
-        lines[#lines + 1] = M.INJECT_MARKER_BEGIN
-        lines[#lines + 1] = "# Injected at: " .. os.date("%Y-%m-%d %H:%M:%S")
-        for peer_nid in proxy_peers:gmatch("[^,]+") do
-            peer_nid = util.trim(peer_nid)
-            if peer_nid ~= "" then
-                lines[#lines + 1] = "# Peer: " .. peer_nid
-                local peer_routes = generate_full_proxy_routes(peer_nid)
-                for _, r in ipairs(peer_routes) do
-                    lines[#lines + 1] = r
-                    total_client = total_client + 1
-                end
+        for line in (content .. "\n"):gmatch("([^\n]*)\n") do
+            lines[#lines + 1] = line
+        end
+        -- 找到 target_nid 最后出现的行号
+        local last_idx = nil
+        local pattern = "^" .. target_nid .. "|"
+        for i, line in ipairs(lines) do
+            if line:match(pattern) then
+                last_idx = i
             end
         end
-        lines[#lines + 1] = M.INJECT_MARKER_END
-        appended = appended .. table.concat(lines, "\n") .. "\n"
+        if last_idx then
+            -- 在 last_idx 之后插入
+            local result = {}
+            for i, line in ipairs(lines) do
+                result[#result + 1] = line
+                if i == last_idx then
+                    result[#result + 1] = inject_block
+                end
+            end
+            return table.concat(result, "\n")
+        else
+            -- 找不到该 nodeId，追加到末尾
+            return content .. inject_block .. "\n"
+        end
     end
 
-    -- ── Server/Both: 为自身节点注入放行路由 ──
-    -- 告知 GNB daemon：本节点负责转发这些公网 IP 段（出口放行）
+    local total_client = 0
+    local total_server = 0
+
+    -- ── Server/Both: server 段插入到自身节点路由分组末尾 ──
     if proxy_mode == "server" or proxy_mode == "both" then
         local lines = {}
         lines[#lines + 1] = M.SERVER_MARKER_BEGIN
@@ -806,15 +821,37 @@ function M.route_inject()
             total_server = total_server + 1
         end
         lines[#lines + 1] = M.SERVER_MARKER_END
-        appended = appended .. table.concat(lines, "\n") .. "\n"
+        local block = table.concat(lines, "\n")
+        clean = insert_after_node(clean, nid_str, block)
+    end
+
+    -- ── Client/Both: 每个 proxy peer 各自一对 BEGIN/END，插入到该 peer 路由分组末尾 ──
+    -- strip_section 支持多对 begin/end，stripping 时每对独立清除，不影响中间其他节点路由。
+    if (proxy_mode == "client" or proxy_mode == "both") and proxy_peers ~= "" then
+        for peer_nid in proxy_peers:gmatch("[^,]+") do
+            peer_nid = util.trim(peer_nid)
+            if peer_nid ~= "" then
+                local lines = {}
+                lines[#lines + 1] = M.INJECT_MARKER_BEGIN
+                lines[#lines + 1] = "# Injected at: " .. os.date("%Y-%m-%d %H:%M:%S")
+                lines[#lines + 1] = "# Peer: " .. peer_nid
+                local peer_routes = generate_full_proxy_routes(peer_nid)
+                for _, r in ipairs(peer_routes) do
+                    lines[#lines + 1] = r
+                    total_client = total_client + 1
+                end
+                lines[#lines + 1] = M.INJECT_MARKER_END
+                local block = table.concat(lines, "\n")
+                clean = insert_after_node(clean, peer_nid, block)
+            end
+        end
     end
 
     if total_client == 0 and total_server == 0 then
         return nil, "no routes to inject (mode=" .. proxy_mode .. ", peers=" .. proxy_peers .. ")"
     end
 
-    -- 追加到 route.conf（不触发 generate_route_conf）
-    util.write_file(route_conf, clean .. appended)
+    util.write_file(route_conf, clean)
 
     util.log_info(string.format(
         "route_inject: client=%d server=%d routes for node %s (mode=%s)",
