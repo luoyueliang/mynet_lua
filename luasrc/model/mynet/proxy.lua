@@ -195,6 +195,12 @@ function M.enable(opts)
     -- 安装 plugin hook symlink / 部署
     M.install_plugin_hooks()
 
+    -- 注入 GNB route.conf（数据层放行，enable/disable 负责；stop/start 不触碰 route.conf）
+    local inj_ok, inj_msg = M.route_inject()
+    if not inj_ok then
+        util.log_warn("enable route_inject skipped: " .. (inj_msg or ""))
+    end
+
     -- 若 GNB 已运行，立即启动 proxy
     local cfg_m = require("luci.model.mynet.config")
     local node_id = cfg_m.get_node_id()
@@ -371,12 +377,6 @@ function M.start(opts)
 
     local rp_env = "MYNET_HOME=" .. util.shell_escape(util.MYNET_HOME) .. " "
 
-    -- Layer 1: Route inject (GNB 数据层放行)
-    local inj_ok, inj_msg = M.route_inject()
-    if not inj_ok then
-        util.log_warn("route_inject skipped: " .. (inj_msg or ""))
-    end
-
     -- 生成策略路由配置文件（proxy_route.conf + proxy_outbound.txt）
     if util.file_exists(PROXY_SH) then
         local out_gen, code_gen = util.exec_status(
@@ -442,12 +442,10 @@ end
 
 function M.stop()
     -- 调用 route_policy.sh stop（处理所有层：DNS / Server / 策略路由）
+    -- 注意：stop 不恢复 GNB route.conf，route_restore 只由 disable 负责
     local rp_env = "MYNET_HOME=" .. util.shell_escape(util.MYNET_HOME) .. " "
     local out, code = util.exec_status(
         rp_env .. "bash " .. util.shell_escape(ROUTE_POLICY_SH) .. " stop 2>&1")
-
-    -- Route restore (Lua): 恢复 GNB route.conf
-    M.route_restore()
 
     -- 清除状态 + 防火墙 include
     os.remove(PROXY_STATE_FILE)
@@ -464,9 +462,8 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 function M.reload()
-    -- 下载最新 IP 列表
-    M.download_ip_lists()
-
+    -- 仅重新生成配置文件（IP 列表已随包内置，reload 不触发网络下载）
+    -- 若需更新 IP 列表，使用独立的 update_ip_lists() 接口
     -- 重新生成配置文件
     if util.file_exists(PROXY_SH) then
         local out_gen, code_gen = util.exec_status(

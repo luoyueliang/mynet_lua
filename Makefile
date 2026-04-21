@@ -63,6 +63,15 @@ define Package/luci-app-mynet/install
 	$(INSTALL_BIN) ./scripts/proxy/hooks/stop.sh $(1)/etc/mynet/scripts/proxy/hooks/
 	$(INSTALL_BIN) ./scripts/proxy/route_policy.sh $(1)/etc/mynet/scripts/proxy/
 
+	# --- Proxy IP sources (bundled default lists, do not overwrite if already exist on device) ---
+	$(INSTALL_DIR) $(1)/etc/mynet/conf/proxy/proxy_sources
+	[ -f ./root/etc/mynet/conf/proxy/proxy_sources/interip.txt ] && \
+		$(INSTALL_DATA) ./root/etc/mynet/conf/proxy/proxy_sources/interip.txt \
+			$(1)/etc/mynet/conf/proxy/proxy_sources/ || true
+	[ -f ./root/etc/mynet/conf/proxy/proxy_sources/chinaip.txt ] && \
+		$(INSTALL_DATA) ./root/etc/mynet/conf/proxy/proxy_sources/chinaip.txt \
+			$(1)/etc/mynet/conf/proxy/proxy_sources/ || true
+
 	# --- Runtime scripts: tools (optional diagnostics) ---
 	$(INSTALL_DIR) $(1)/etc/mynet/scripts/tools
 	$(INSTALL_BIN) ./scripts/tools/check_openwrt_masq.sh $(1)/etc/mynet/scripts/tools/
