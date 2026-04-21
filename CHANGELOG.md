@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.1.8 (2026-04-21)
+
+### Bug Fixes
+- **config: `get_node_id()` 返回 string 而非 number** — 原来 `return tonumber(v)` 在 Lua 中对 > 1e14 的整数调用 `tostring()` / `..` 拼接时产生科学计数法（如 `3.722810996882e+15`），改为 `return util.int_str(tonumber(v))` 始终返回十进制字符串；同步修正所有 `node_id == 0` 比较为 `node_id == "0"`（涉及 config.lua / system.lua / node.lua / controller）
+- **proxy: 重启不清除 route.conf 注入标记** — `stop.sh` hook 移除 `sed` marker 清理；新增 `proxy.lua M.pre_start()`，由 `pre_start.sh` hook 在 GNB 启动前调用，确保 route.conf 注入标记在 GNB 每次启动前都存在
+
 ## v2.1.7 (2026-04-21)
 
 ### Refactor

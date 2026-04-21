@@ -654,10 +654,10 @@ function M.run_daemon_heartbeat()
 
     -- 读取 NODE_ID
     local node_id = cfg_m.get_node_id()
-    if not node_id or node_id == 0 then
+    if not node_id or node_id == "0" then
         return nil, "NODE_ID not configured"
     end
-    local nid_str = util.int_str(node_id)
+    local nid_str = node_id
 
     -- 读取公钥（32 字节 = 64 hex，HMAC key）
     local pub_path = string.format("%s/%s/security/%s.public",

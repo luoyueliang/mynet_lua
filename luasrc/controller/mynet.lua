@@ -826,7 +826,7 @@ function action_wizard()
     end
 
     -- 自动跳到第一个未完成步骤（用户未显式指定 tab 时）
-    local has_node_now = (node_id ~= nil and node_id ~= 0)
+    local has_node_now = (node_id ~= nil and node_id ~= "0")
     local active_tab = req_tab
     if not active_tab or active_tab == "" then
         if not has_zone then
@@ -1210,7 +1210,7 @@ function api_get_status()
 
     local node_id = cfg_m.get_node_id()
     -- 状态优先检测 gnb 进程（直接启动模式），其次回落到 init.d 服务
-    local gnb_running = node_id and node_id ~= 0 and node_m.gnb_is_running(node_id)
+    local gnb_running = node_id and node_id ~= "0" and node_m.gnb_is_running(node_id)
     local vpn_status
     if gnb_running then
         vpn_status = "running"

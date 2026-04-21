@@ -37,7 +37,7 @@ end
 function M.is_mynet_configured()
     -- 1. mynet.conf 存在且有有效 NODE_ID
     local node_id = M.get_node_id()
-    if not node_id or node_id == 0 then return false end
+    if not node_id or node_id == "0" then return false end
     -- 2. zone 已选择
     local zone = M.load_current_zone()
     if not zone or tostring(zone.zone_id) == "0" then return false end
@@ -165,11 +165,12 @@ function M.get_vpn_interface()
     return M.load_vpn_conf().VPN_INTERFACE or "gnb_tun"
 end
 
--- 快捷：mynet.conf 中配置的 NODE_ID（int64 或 nil）
+-- 快捷：mynet.conf 中配置的 NODE_ID（十进制字符串或 nil）
+-- 注意：返回 string 而非 number，避免 Lua tostring() 产生科学计数法
 function M.get_node_id()
     local v = M.load_vpn_conf().NODE_ID
     if not v or v == "" then return nil end
-    return tonumber(v)
+    return util.int_str(tonumber(v) or 0)
 end
 
 -- 写入 mynet.conf 中的 NODE_ID（保留其余行不变）

@@ -798,7 +798,7 @@ end
 function M.get_vpn_service_status()
     -- 通过 pidfile + cmdline 验证（多实例安全，不使用全局 pidof）
     local node_id = cfg.get_node_id()
-    if node_id and node_id ~= 0 then
+    if node_id and node_id ~= "0" then
         if M.gnb_is_running(node_id) then return "running" end
     end
     return "stopped"
