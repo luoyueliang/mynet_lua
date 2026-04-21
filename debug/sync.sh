@@ -82,6 +82,14 @@ build_ipk() {
         "$data_dir/etc/mynet/scripts/proxy/hooks/"
     install -m 0755 "$PROJECT_DIR/scripts/proxy/route_policy.sh" \
         "$data_dir/etc/mynet/scripts/proxy/"
+    # rc.mynet 从 scripts/plugin/<plugin>/<hook>.sh 调用，确保 proxy plugin 目录同步
+    install -d "$data_dir/etc/mynet/scripts/plugin/proxy"
+    install -m 0755 "$PROJECT_DIR/scripts/proxy/hooks/pre_start.sh" \
+        "$data_dir/etc/mynet/scripts/plugin/proxy/"
+    install -m 0755 "$PROJECT_DIR/scripts/proxy/hooks/post_start.sh" \
+        "$data_dir/etc/mynet/scripts/plugin/proxy/"
+    install -m 0755 "$PROJECT_DIR/scripts/proxy/hooks/stop.sh" \
+        "$data_dir/etc/mynet/scripts/plugin/proxy/"
 
     # --- Tools ---
     install -d "$data_dir/etc/mynet/scripts/tools"
