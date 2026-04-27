@@ -20,16 +20,16 @@ fi
 log_proxy "ensuring proxy route injection before GNB start"
 MYNET_HOME="$MYNET_HOME" lua <<'LUA' 2>&1 || {
 local proxy = require("luci.model.mynet.proxy")
-local ok, msg = proxy.pre_start()
+local ok, msg = proxy.route_inject()
 if not ok then
-    io.stderr:write((msg or "proxy.pre_start failed") .. "\n")
+    io.stderr:write((msg or "proxy.route_inject failed") .. "\n")
     os.exit(1)
 end
 if msg and msg ~= "" then
     io.stdout:write(msg .. "\n")
 end
 LUA
-    log_proxy "ERROR: proxy.pre_start failed (exit $?)"
+    log_proxy "ERROR: proxy.route_inject failed (exit $?)"
     exit 1
 }
 

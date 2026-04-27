@@ -102,6 +102,14 @@ start() {
 
     add_default_routes
     add_ip_rules
+
+    # DNS：切换 dnsmasq 上游到 peer 节点的 smartdns（国内外分流）
+    # 10.133.245.83 是 GNB peer VIP，gnb_tun 接口的直连路由已覆盖，无需额外 ip route
+    uci -q del dhcp.@dnsmasq[0].server
+    uci add_list dhcp.@dnsmasq[0].server="$PROXY_GATEWAYS"
+    uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
+    echo "[INFO] ✓ dnsmasq 已切换到 smartdns ($PROXY_GATEWAYS via gnb_tun, 国内外分流)"
+
     echo "[INFO] ✓ 代理路由已启动"
 }
 
@@ -365,6 +373,13 @@ stop() {
             ip route flush table "$id" 2>/dev/null || true
         done
     fi
+
+    # 恢复 dnsmasq 到国内 DNS（代理停止后 peer smartdns 不可达）
+    uci -q del dhcp.@dnsmasq[0].server
+    uci add_list dhcp.@dnsmasq[0].server='223.5.5.5'
+    uci add_list dhcp.@dnsmasq[0].server='119.29.29.29'
+    uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
+    echo "[INFO] ✓ dnsmasq 已恢复国内 DNS (223.5.5.5)"
 
     echo "[INFO] ✓ 代理路由已停止"
 }

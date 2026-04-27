@@ -1274,7 +1274,7 @@ function M.start_gnb(node_id)
 
     util.ensure_dir(conf)
     local cmd = string.format(
-        "'%s' -c '%s' </dev/null >> '%s' 2>&1 & echo $! > '%s'",
+        "'%s' -c '%s' --pf-route </dev/null >> '%s' 2>&1 & echo $! > '%s'",
         bin, conf, log, pid)
     util.exec(cmd)
 
