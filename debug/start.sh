@@ -60,7 +60,7 @@ QEMU_ARGS=(
     -machine virt,accel=hvf
     -cpu host
     -smp 2
-    -m 256M
+    -m 136M
     -drive "if=pflash,file=${EFI_CODE},format=raw,readonly=on"
     -drive "file=$SCRIPT_DIR/$IMG,format=qcow2,if=virtio"
     -device virtio-rng-pci

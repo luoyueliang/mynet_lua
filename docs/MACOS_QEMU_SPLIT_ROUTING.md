@@ -115,7 +115,7 @@ en0 WiFi (macOS 自己的 MAC)
 
 | 资源 | 配置 | 说明 |
 |------|------|------|
-| 内存 | 256M | nft set 加载 1.7 万条规则（从 130 万条压缩而来）需要 ~150M |
+| 内存 | 136M | UEFI 固件占 25M，剩余 111M 运行内核 + nft set + GNB + dnsmasq |
 | CPU | 2 核 | 转发和 nft 匹配都是轻量操作，2 核绑绑有余 |
 | 磁盘 | 1-2G | qcow2 镜像，随用随扩 |
 | 硬件加速 | HVF | Apple 原生虚拟化，`-machine virt,accel=hvf`，接近原生性能 |
@@ -125,10 +125,13 @@ en0 WiFi (macOS 自己的 MAC)
 -machine virt,accel=hvf    # Apple HVF 硬件加速（必须）
 -cpu host                   # 透传宿主 CPU 特性
 -smp 2                      # 2 核
--m 256M                     # 256M 内存
+-m 136M                     # 136M 内存（UEFI 占 25M，128M 会 OOM）
 ```
 
-**为什么 256M：** nft set 加载 1.7 万条 IP 段时，`nft -f` 进程峰值内存 ~150M。这些条目是从 130 万条原始记录压缩而来，外部工具已无法进一步压缩。128M 会被内核 OOM killer 杀掉。256M 是实际测试的最低要求。
+**为什么 136M：** QEMU 的 UEFI 固件（edk2-aarch64-code.fd）加载后占用 ~25M，剩余 111M 给 Linux 内核和用户空间。实际测试：
+- 128M → nft -f OOM（可用 36M，峰值超限）
+- 136M → nft -f 成功（可用 37M，刚好够用）
+- 内核 + GNB(8.7M) + nft set(4.3M) + dnsmasq(1.1M) + 其他服务 ≈ 42M
 
 > nft -f 本身是批处理优化的，加载 1.7 万条只需 ~0.1 秒。OOM 通常发生在 VM 启动阶段多个服务同时争抢内存时，与 nft 本身无关。
 
