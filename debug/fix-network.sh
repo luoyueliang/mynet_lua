@@ -64,13 +64,6 @@ ssh $SSH_OPTS $ROUTER "
 " 2>/dev/null
 echo "[fix-network] opkg 源已切换 ✓"
 
-echo "[fix-network] 关闭不必要的服务（节省 ~10MB 内存）..."
-ssh $SSH_OPTS $ROUTER "
-    for svc in uhttpd odhcpd cron packet_steering gpio_switch; do
-        /etc/init.d/\$svc disable 2>/dev/null && echo \"  - \$svc 已禁用\"
-    done
-" 2>/dev/null
-
 echo "[fix-network] 验证 opkg update..."
 ssh $SSH_OPTS $ROUTER "rm -f /var/lock/opkg.lock && opkg update 2>&1 | grep -E 'Updated|error|Error'" 2>/dev/null
 echo ""

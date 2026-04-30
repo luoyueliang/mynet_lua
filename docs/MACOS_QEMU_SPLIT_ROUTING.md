@@ -115,22 +115,22 @@ en0 WiFi (macOS 自己的 MAC)
 
 | 资源 | 配置 | 说明 |
 |------|------|------|
-| 内存 | 128M | UEFI 固件占 25M，剩余可用 ~105M。经过服务裁剪，128M 刚好够用 |
+| 内存 | 256M | 完整 OpenWrt 功能（含 LuCI Web 管理），余量充足 |
 | CPU | 2 核 | 转发和 nft 匹配都是轻量操作，2 核绑绑有余 |
 | 磁盘 | 1-2G | qcow2 镜像，随用随扩 |
 | 硬件加速 | HVF | Apple 原生虚拟化，`-machine virt,accel=hvf`，接近原生性能 |
 
 ```bash
-# 最小化启动参数
+# QEMU 启动参数
 -machine virt,accel=hvf    # Apple HVF 硬件加速（必须）
 -cpu host                   # 透传宿主 CPU 特性
 -smp 2                      # 2 核
--m 128M                     # 128M 内存
+-m 256M                     # 256M 内存
 ```
 
-**为什么 128M：** QEMU 的 UEFI 固件（edk2-aarch64-code.fd）占用 ~25M 开销。128M 配置下 Linux 可用 ~105M，内核 + GNB(8.7M) + nft set(4.3M) + dnsmasq(1.1M) + 其他服务 ≈ 42M。实测 128M 是 UEFI + nft set 加载的精确下限。
+**内存说明：** UEFI 固件（edk2-aarch64-code.fd）占用 ~25M 固定开销。256M 下 Linux 可用 ~233M，内核 + GNB + nft set + dnsmasq + 系统服务 ≈ 50M，余量充足。
 
-> 需要裁剪不必要的 OpenWrt 服务以释放 ~10M 内存。详见 `fix-network.sh`。
+> 理论上，如果使用 QEMU 的 `-kernel` 直接内核引导（跳过 UEFI），可以省掉 25M 开销，128M 甚至 64M 都可能可行。但 OpenWrt 的镜像打包方式（EFI 一体化）不适合直接提取内核。用 Alpine/Debian 等发行版配合直接内核引导是另一个方向。
 
 **HVF 硬件加速：** macOS 的 Hypervisor.framework（QEMU 中的 `accel=hvf`）直接使用 Apple Silicon 的虚拟化扩展，VM 指令在硬件上执行，无需二进制翻译。性能接近原生，启动时间 < 1 秒。没有 HVF 的话，QEMU 会退回到 TCG（软件模拟），性能下降 10-50 倍。
 
@@ -308,36 +308,6 @@ ping 192.168.10.1
 ## 6. VM 内的分流实现
 
 VM 内的分流不限于 OpenWrt。任何 Linux 发行版，只要能装 nftables 和 VPN 客户端，都可以。
-
-### 6.0 OpenWrt 内存优化
-
-要让 OpenWrt 在 128M 内存下流畅运行 nft set + GNB，必须裁剪不必要的服务。`fix-network.sh` 中执行以下优化：
-
-```bash
-# 关闭不必要的服务（节省 ~10MB 内存）
-for svc in uhttpd odhcpd cron packet_steering gpio_switch; do
-    /etc/init.d/$svc disable
-done
-```
-
-| 服务 | 功能 | 是否必要 | 节省内存 |
-|------|------|---------|---------|
-| uhttpd | LuCI Web 管理界面 | ❌（可通过 SSH 管理） | ~2 MB |
-| odhcpd | DHCPv6 服务器 | ❌（VM 不做 DHCP） | ~1 MB |
-| cron | 定时任务 | ❌ | <1 MB |
-| packet_steering | CPU 亲和性优化 | ❌（VM 只有 2 核） | <1 MB |
-| gpio_switch | GPIO 控制 | ❌（VM 无 GPIO） | <1 MB |
-| rpcd | OpenWrt RPC 框架 | ❌（不用 LuCI 就不需要） | ~2.3 MB |
-
-裁剪后，128M VM 的内存分配：
-- UEFI 固件占 25M
-- Linux 内核 + 服务 ≈ 32M
-- GNB 进程 ≈ 9M  
-- nft set（1.7 万条）≈ 4M
-- dnsmasq ≈ 1M
-- 空闲 ≈ 15M（余量）
-
-> 如果这些服务被禁用后内存仍然不足，检查 `/proc/meminfo` 中的 `Slab` 字段。nft -f 的峰值内存可能超过最终占用。加载 nft set 时添加 `sleep 3` 延迟可以让系统先稳定下来。
 
 ### 6.1 最小要求
 
