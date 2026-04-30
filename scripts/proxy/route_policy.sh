@@ -103,12 +103,20 @@ start() {
     add_default_routes
     add_ip_rules
 
-    # DNS：切换 dnsmasq 上游到 peer 节点的 smartdns（国内外分流）
-    # 10.133.245.83 是 GNB peer VIP，gnb_tun 接口的直连路由已覆盖，无需额外 ip route
-    uci -q del dhcp.@dnsmasq[0].server
-    uci add_list dhcp.@dnsmasq[0].server="$PROXY_GATEWAYS"
-    uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
-    echo "[INFO] ✓ dnsmasq 已切换到 smartdns ($PROXY_GATEWAYS via gnb_tun, 国内外分流)"
+    # DNS：仅在 DNS_MODE!=none 时切换 dnsmasq 上游到 peer 的 smartdns
+    # DNS_MODE=none 表示本机已有独立 DNS 方案（如 smartdns/mosdns），不做任何修改
+    if [ "${DNS_MODE:-none}" != "none" ]; then
+        uci -q del dhcp.@dnsmasq[0].server
+        uci add_list dhcp.@dnsmasq[0].server="$PROXY_GATEWAYS"
+        uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
+        echo "[INFO] ✓ dnsmasq 已切换到 smartdns ($PROXY_GATEWAYS via gnb_tun, 国内外分流)"
+
+        # DNS 劫持：强制所有 LAN DNS 请求走 smartdns（redirect 模式）
+        local _dns_srv="${DNS_SERVER:-$PROXY_GATEWAYS}"
+        [ -n "$_dns_srv" ] && start_dns_intercept "$DNS_MODE" "$_dns_srv"
+    else
+        echo "[INFO] DNS_MODE=none，跳过 dnsmasq upstream 切换（本机 DNS 方案保持不变）"
+    fi
 
     echo "[INFO] ✓ 代理路由已启动"
 }
@@ -277,6 +285,15 @@ start_dns_intercept() {
     [ -z "$dns_server" ] && { echo "[ERROR] DNS 需要指定服务器地址"; return 1; }
     echo "[INFO] DNS 劫持: $dns_mode → $dns_server"
 
+    # 如果 DNS server 不是 peer，强制路由到 gnb_tun（nft set/ipset 无法处理本机出站流量）
+    local _peer="${PROXY_GATEWAYS%%,*}"
+    if [ -n "$_peer" ] && [ "$dns_server" != "$_peer" ]; then
+        ip route replace "${dns_server}/32" dev "$GNB_INTERFACE" 2>/dev/null && \
+            echo "[INFO] DNS 路由: ${dns_server}/32 → $GNB_INTERFACE（非 peer，强制走隧道）"
+        # 记录 DNS server，用于 stop 时清理路由
+        echo "$dns_server" > /tmp/.dns_route
+    fi
+
     case "$dns_mode" in
         redirect)
             case "$FW_TYPE" in
@@ -312,6 +329,16 @@ start_dns_intercept() {
 
 stop_dns_intercept() {
     echo "[INFO] 停止 DNS 劫持..."
+
+    # 清理 DNS 路由（由 start_dns_intercept 添加的）
+    if [ -f /tmp/.dns_route ]; then
+        local _dns_srv
+        _dns_srv=$(cat /tmp/.dns_route)
+        ip route delete "${_dns_srv}/32" dev "$GNB_INTERFACE" 2>/dev/null && \
+            echo "[INFO] 已移除 DNS 路由: ${_dns_srv}/32"
+        rm -f /tmp/.dns_route
+    fi
+
     case "${FW_TYPE:-}" in
         nftables) nft delete chain inet mynet_proxy dns_intercept 2>/dev/null || true ;;
         iptables)
@@ -374,12 +401,16 @@ stop() {
         done
     fi
 
-    # 恢复 dnsmasq 到国内 DNS（代理停止后 peer smartdns 不可达）
-    uci -q del dhcp.@dnsmasq[0].server
-    uci add_list dhcp.@dnsmasq[0].server='223.5.5.5'
-    uci add_list dhcp.@dnsmasq[0].server='119.29.29.29'
-    uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
-    echo "[INFO] ✓ dnsmasq 已恢复国内 DNS (223.5.5.5)"
+    # 恢复 dnsmasq：仅在当时切换过（DNS_MODE!=none）才恢复
+    if [ "${DNS_MODE:-none}" != "none" ]; then
+        uci -q del dhcp.@dnsmasq[0].server
+        uci add_list dhcp.@dnsmasq[0].server='223.5.5.5'
+        uci add_list dhcp.@dnsmasq[0].server='119.29.29.29'
+        uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
+        echo "[INFO] ✓ dnsmasq 已恢复国内 DNS (223.5.5.5)"
+    else
+        echo "[INFO] DNS_MODE=none，跳过 dnsmasq 恢复（本机 DNS 方案保持不变）"
+    fi
 
     echo "[INFO] ✓ 代理路由已停止"
 }

@@ -2414,7 +2414,7 @@ function api_guest_start()
         json_err("gnb 未安装，请先安装 GNB"); return
     end
 
-    local conf_dir = util.GNB_CONF_DIR .. "/" .. tostring(g.local_node_id)
+    local conf_dir = util.GNB_CONF_DIR .. "/" .. util.int_str(g.local_node_id)
     if not util.file_exists(conf_dir .. "/node.conf") then
         json_err("节点配置不存在"); return
     end

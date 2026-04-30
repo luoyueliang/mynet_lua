@@ -9,14 +9,14 @@
 
 set -euo pipefail
 
-ROUTER="openwrt-qemu"
+ROUTER="${ROUTER:-openwrt-qemu}"
 SSH_OPTS="-o ConnectTimeout=5"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 PKG_NAME="luci-app-mynet"
-PKG_VERSION="2.1.6"
+PKG_VERSION="1.0.0"
 PKG_RELEASE="1"
 BUILD_DIR="$PROJECT_DIR/build"
 IPK_FILE="$BUILD_DIR/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_all.ipk"
@@ -80,16 +80,14 @@ build_ipk() {
         "$data_dir/etc/mynet/scripts/proxy/hooks/"
     install -m 0755 "$PROJECT_DIR/scripts/proxy/hooks/stop.sh" \
         "$data_dir/etc/mynet/scripts/proxy/hooks/"
+    # route_policy.sh 同时安装到两个路径：
+    #   proxy/route_policy.sh         -- proxy.lua ROUTE_POLICY_SH 引用路径
+    #   proxy/openwrt/route_policy.sh -- 兼容旧版路径
     install -m 0755 "$PROJECT_DIR/scripts/proxy/route_policy.sh" \
-        "$data_dir/etc/mynet/scripts/proxy/"
-    # rc.mynet 从 scripts/plugin/<plugin>/<hook>.sh 调用，确保 proxy plugin 目录同步
-    install -d "$data_dir/etc/mynet/scripts/plugin/proxy"
-    install -m 0755 "$PROJECT_DIR/scripts/proxy/hooks/pre_start.sh" \
-        "$data_dir/etc/mynet/scripts/plugin/proxy/"
-    install -m 0755 "$PROJECT_DIR/scripts/proxy/hooks/post_start.sh" \
-        "$data_dir/etc/mynet/scripts/plugin/proxy/"
-    install -m 0755 "$PROJECT_DIR/scripts/proxy/hooks/stop.sh" \
-        "$data_dir/etc/mynet/scripts/plugin/proxy/"
+        "$data_dir/etc/mynet/scripts/proxy/route_policy.sh"
+    install -d "$data_dir/etc/mynet/scripts/proxy/openwrt"
+    install -m 0755 "$PROJECT_DIR/scripts/proxy/route_policy.sh" \
+        "$data_dir/etc/mynet/scripts/proxy/openwrt/"
 
     # --- Tools ---
     install -d "$data_dir/etc/mynet/scripts/tools"
@@ -104,11 +102,6 @@ build_ipk() {
     install -d "$data_dir/usr/sbin"
     install -m 0755 "$PROJECT_DIR/root/usr/sbin/mynet-fix-curl" \
         "$data_dir/usr/sbin/"
-
-    # --- heartbeat cron script (替代 mynetd) ---
-    install -d "$data_dir/usr/bin"
-    install -m 0755 "$PROJECT_DIR/scripts/shell/heartbeat.sh" \
-        "$data_dir/usr/bin/mynet-heartbeat"
 
     # --- Deploy route.mynet / firewall.mynet to scripts/ (fixed path) ---
     install -m 0755 "$PROJECT_DIR/scripts/runtime/route.mynet" \
@@ -151,8 +144,6 @@ EOF
 [ -n "${IPKG_INSTROOT}" ] && exit 0
 # Clean up legacy _src directory from older versions
 rm -rf /etc/mynet/scripts/_src
-# Stop and disable Go mynetd (replaced by cron heartbeat)
-pkill -x mynetd 2>/dev/null || true
 # Enable and load tun module
 modprobe tun 2>/dev/null
 # Sync proxy hooks -> plugin/proxy/ (rc.mynet calls scripts/plugin/<plugin>/<hook>.sh)
@@ -169,12 +160,6 @@ MYNET_HOME=/etc/mynet sh /etc/mynet/scripts/firewall.mynet install 2>/dev/null
 rm -rf /tmp/luci-*
 # Enable mynet service (don't start — user needs to configure first)
 /etc/init.d/mynet enable 2>/dev/null
-# Setup heartbeat cron (every 5 minutes, replaces mynetd)
-mkdir -p /etc/crontabs
-if ! grep -q 'mynet-heartbeat' /etc/crontabs/root 2>/dev/null; then
-    echo '*/5 * * * * /usr/bin/mynet-heartbeat' >> /etc/crontabs/root
-fi
-/etc/init.d/cron reload 2>/dev/null || true
 exit 0
 POSTINST
     chmod +x "$ctrl_dir/postinst"
@@ -184,11 +169,6 @@ POSTINST
 [ -n "${IPKG_INSTROOT}" ] && exit 0
 /etc/init.d/mynet stop 2>/dev/null
 /etc/init.d/mynet disable 2>/dev/null
-# Remove heartbeat cron entry
-if [ -f /etc/crontabs/root ]; then
-    sed -i '/mynet-heartbeat/d' /etc/crontabs/root
-    /etc/init.d/cron reload 2>/dev/null || true
-fi
 exit 0
 PRERM
     chmod +x "$ctrl_dir/prerm"

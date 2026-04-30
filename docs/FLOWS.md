@@ -155,59 +155,64 @@ flowchart TD
 
 ## 5. 代理分流运行流程（Proxy Traffic Split Flow）
 
-通过 GNB 隧道进行策略路由分流。
+通过 GNB 隧道进行 nftables + 策略路由分流。代理流量**不走内核主路由表**，走 fwmark → ip rule → table 200 → gnb_tun。
 
 ```mermaid
 flowchart TD
     A[用户点击 Enable Proxy] --> B{GNB 正在运行?}
     B -- 否 --> C[返回错误: 先启动 GNB]
-    B -- 是 --> D[保存代理参数]
+    B -- 是 --> D["proxy.start() 读取 proxy_role.conf"]
 
-    D --> D1[mode: client/server]
-    D --> D2[region: domestic/overseas]
-    D --> D3[dns_mode: none/intercept/redirect]
+    D --> D1["参数: mode / region / dns_mode / proxy_peers"]
+    D1 --> D2["更新 proxy_policy_params.env\n写入 DNS_MODE / DNS_SERVER\n（route_policy.sh 读取此文件）"]
 
-    D1 --> E[Lua route_inject]
-    D2 --> E
-    D3 --> E
-    E --> E1[读取 route.conf 获取对端节点]
-    E1 --> E2[为对端添加 GNB 数据路由]
+    D2 --> E["route_inject()\n在 route.conf 末尾注入 #----proxy begin---- 段\n告诉 GNB 数据层将国际 IP 通过隧道转发"]
 
-    E2 --> F["调用 Lua proxy.start()"]
-    F --> G[pre_start.sh hook]
-    G --> H[创建 ipset 集合]
-    H --> I[加载分流规则列表]
-    I --> J[配置策略路由表]
-    J --> K[post_start.sh hook]
-    K --> L{DNS 模式}
+    E --> F["proxy.sh generate\n将 interip.txt / chinaip.txt\n加载到 nft set mynet_proxy（约 17800+ 条目）"]
 
-    L -- none --> M[完成]
-    L -- intercept --> N[iptables DNAT 53→本地DNS]
-    L -- redirect --> O[使用指定 DNS 服务器]
-    N --> M
-    O --> M
+    F --> G["route_policy.sh start\n读取 proxy_policy_params.env"]
 
-    M --> P[注册防火墙 include]
-    P --> Q[记录运行状态]
-    Q --> R[返回 success]
+    G --> G1["ip rule add fwmark 0xc8 lookup table 200\nip route add default via peer_vip dev gnb_tun table 200"]
+    G1 --> G2["nft: mynet_fwd chain\n匹配 dst ∈ mynet_proxy set → meta mark set 0xc8\n仅 FORWARD 链（转发 LAN 流量），不标记 OUTPUT"]
+
+    G2 --> G3["切换 dnsmasq upstream → peer_vip:53\n国内/国外智能分流由对端 smartdns 完成\n返回正确 IP → nft set 命中 → 走 gnb_tun"]
+
+    G3 --> H{DNS_MODE?}
+    H -- none --> I[完成\ndnsmasq 负责解析，LAN 客户端 DNS 走 dnsmasq]
+    H -- redirect --> J["nft chain dns_intercept\ntype nat hook prerouting priority dstnat\niifname br-lan udp/tcp dport 53 dnat → peer_vip:53\n（LAN 客户端 DNS 完全绕过 dnsmasq）"]
+    J --> I
+
+    I --> K[写入 proxy_state.json\nmode / dns_mode / start_ts / region]
+    K --> L[返回 success]
 
     style A fill:#e8f5e9
     style C fill:#ffebee
-    style R fill:#e8f5e9
+    style L fill:#e8f5e9
 ```
+
+### DNS 流量路径说明
+
+| 流量来源 | dns_mode=none | dns_mode=redirect |
+|---|---|---|
+| LAN 客户端 DNS | → dnsmasq → peer_vip:53 | DNAT 直接 → peer_vip:53（绕过 dnsmasq） |
+| 路由器自身 DNS | → dnsmasq → peer_vip:53 | → dnsmasq → peer_vip:53（OUTPUT 不被 DNAT） |
+| peer_vip:53 到 9.1 | 直连路由 10.133.245.0/24 dev gnb_tun | 同左（不经过 fwmark 策略路由） |
 
 ### 代理停止流程
 
 ```mermaid
 flowchart TD
-    A[用户点击 Stop/Disable Proxy] --> B["调用 Lua proxy.stop()"]
-    B --> C[stop.sh hook]
-    C --> D[清除 ipset 集合]
-    D --> E[移除策略路由规则]
-    E --> F[Lua route_restore]
-    F --> G[清除运行状态文件]
-    G --> H[注销防火墙 include]
-    H --> I[返回 success]
+    A[用户点击 Stop/Disable Proxy] --> B["proxy.stop()"]
+    B --> C["route_policy.sh stop"]
+    C --> C1["flush nft chain mynet_fwd\n删除 fwmark mark 规则"]
+    C1 --> C2["ip rule del fwmark 0xc8\nip route flush table 200"]
+    C2 --> C3{dns_intercept chain 存在?}
+    C3 -- 是 --> C4["flush + delete nft chain dns_intercept"]
+    C3 --> C5
+    C4 --> C5["恢复 dnsmasq: 移除 proxy peer upstream\nuci del dhcp.@dnsmasq[0].server + reload"]
+    C5 --> D["route_restore()\n清除 route.conf 中 #----proxy begin/end---- 段"]
+    D --> E["删除 proxy_state.json"]
+    E --> F[返回 success]
 ```
 
 ---

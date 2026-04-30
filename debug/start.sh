@@ -2,8 +2,8 @@
 # start.sh — 启动 OpenWrt QEMU 虚拟机
 #
 # 网络模式：vmnet（需要 sudo）
-#   WAN (eth0): vmnet-shared — NAT 上网
-#   LAN (eth1): vmnet-host   — 管理口 192.168.101.0/24
+#   LAN (eth0): vmnet-host   — 管理口 192.168.101.0/24
+#   WAN (eth1): vmnet-bridged — 桥接到 WiFi(en0)，直接接入家庭路由器，自动获取 IP
 #
 # 访问方式（直连 VM IP）：
 #   SSH:  ssh openwrt-qemu          （~/.ssh/config: 192.168.101.2）
@@ -66,12 +66,14 @@ QEMU_ARGS=(
     -device virtio-rng-pci
     -serial "tcp::4444,server,nowait"
     -monitor "unix:$SCRIPT_DIR/qemu-mon.sock,server,nowait"
-    # WAN: vmnet-shared（NAT 上网）
-    -device virtio-net-pci,netdev=wan
-    -netdev vmnet-shared,id=wan
     # LAN: vmnet-host（管理口，固定子网 192.168.101.0/24）
+    # 放在第一张网卡，确保 OpenWrt 中为 eth0，更符合惯例
     -device virtio-net-pci,netdev=lan
     -netdev vmnet-host,id=lan,start-address=192.168.101.1,end-address=192.168.101.254,subnet-mask=255.255.255.0
+    # WAN: vmnet-bridged（桥接 WiFi en0，VM 直接接入家庭 192.168.0.0/24）
+    # MAC 固定，方便路由器按 MAC 绑定静态 IP
+    -device virtio-net-pci,netdev=wan,mac=52:54:00:12:34:56
+    -netdev vmnet-bridged,id=wan,ifname=en0
 )
 
 if [[ "${1:-}" == "-fg" ]]; then
@@ -79,10 +81,11 @@ if [[ "${1:-}" == "-fg" ]]; then
     echo "        SSH:  ssh openwrt-qemu"
     echo "        Web:  http://$VM_IP/cgi-bin/luci/"
     echo "        退出: Ctrl-A X"
-    exec sudo "${QEMU_ARGS[@]}" -nographic
+    exec sudo env OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES "${QEMU_ARGS[@]}" -nographic
 else
     echo "[start] 后台启动 OpenWrt QEMU ..."
-    sudo "${QEMU_ARGS[@]}" \
+    # vmnet-bridged 使用 Objective-C 框架，-daemonize 的 fork() 需要关闭 fork 安全检查
+    sudo env OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES "${QEMU_ARGS[@]}" \
         -display none \
         -daemonize \
         -pidfile "$PID_FILE" \

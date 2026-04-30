@@ -121,7 +121,7 @@ local function write_node_configs(node, all_nodes, local_node, port, all_keys, i
     -- 所有节点公钥（含自身，gnb 运行时需要）
     for _, peer in ipairs(all_nodes) do
         util.write_file(
-            conf_dir .. "/ed25519/" .. tostring(peer.node_id) .. ".public",
+            conf_dir .. "/ed25519/" .. util.int_str(peer.node_id) .. ".public",
             all_keys[peer.node_id].pub_hex)
     end
 end

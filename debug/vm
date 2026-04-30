@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+# vm — macOS 随身分流路由器管理脚本
+#
+# 用法:
+#   vm start    启动 VM
+#   vm stop     停止 VM（自动恢复路由）
+#   vm on       开启网关模式（流量走 VM 分流）
+#   vm off      关闭网关模式（恢复直连）
+#   vm status   查看状态
+#   vm check    测试连通性
+#   vm restart  重启 VM
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
+VM_LAN="192.168.101.2"
+WIFI_IFACE="en0"
+PID_FILE="$SCRIPT_DIR/qemu.pid"
+GATEWAY_MARKER="/tmp/.gateway-mode-active"
+DNS_BACKUP="/tmp/.gateway-dns-backup"
+
+# ── helpers ──────────────────────────────────────────────
+
+vm_running() {
+    if [[ -f "$PID_FILE" ]]; then
+        local pid
+        pid=$(sudo cat "$PID_FILE" 2>/dev/null) || return 1
+        sudo kill -0 "$pid" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+vm_reachable() {
+    ping -c1 -t3 "$VM_LAN" &>/dev/null
+}
+
+current_wifi_gateway() {
+    ipconfig getoption "$WIFI_IFACE" router 2>/dev/null || echo "192.168.0.1"
+}
+
+detect_local_subnet() {
+    local ip mask
+    ip="$(ipconfig getifaddr "$WIFI_IFACE" 2>/dev/null)" || return 1
+    mask="$(ifconfig "$WIFI_IFACE" 2>/dev/null | grep 'inet ' | sed 's/.*mask 0x\([0-9a-f]*\).*/\1/')" || return 1
+    local cidr=0 m=$((16#$mask))
+    while (( m > 0 )); do (( cidr += m & 1, m >>= 1 )); done
+    local IFS='.'; read -r a b c d <<< "$ip"
+    local netmask_dec=$(( (0xFFFFFFFF << (32 - cidr)) & 0xFFFFFFFF ))
+    local ip_dec=$(( (a << 24) + (b << 16) + (c << 8) + d ))
+    local net_dec=$(( ip_dec & netmask_dec ))
+    printf '%d.%d.%d.%d/%d\n' "$(( (net_dec >> 24) & 0xFF ))" "$(( (net_dec >> 16) & 0xFF ))" "$(( (net_dec >> 8) & 0xFF ))" "$(( net_dec & 0xFF ))" "$cidr"
+}
+
+# ── gateway routes ───────────────────────────────────────
+
+dns_save() {
+    # 保存当前 DNS 设置
+    networksetup -getdnsservers "Wi-Fi" 2>/dev/null > "$DNS_BACKUP" || true
+}
+
+dns_set_vm() {
+    echo "[dns] 设置 DNS -> $VM_LAN"
+    sudo networksetup -setdnsservers "Wi-Fi" "$VM_LAN"
+}
+
+dns_restore() {
+    if [[ -f "$DNS_BACKUP" ]]; then
+        local servers
+        servers=$(cat "$DNS_BACKUP")
+        if [[ "$servers" == *"There aren't any DNS Servers"* ]] || [[ -z "$servers" ]]; then
+            echo "[dns] 恢复 DNS -> DHCP 自动"
+            sudo networksetup -setdnsservers "Wi-Fi" "Empty"
+        else
+            echo "[dns] 恢复 DNS -> $servers"
+            sudo networksetup -setdnsservers "Wi-Fi" $servers
+        fi
+        rm -f "$DNS_BACKUP"
+    fi
+}
+
+gateway_on() {
+    local subnet
+    subnet="$(detect_local_subnet)" || { echo "[gateway] 无法探测本地子网"; exit 1; }
+
+    # 保存 DNS
+    dns_save
+
+    echo "[gateway] 添加 223 条 /8 路由 -> $VM_LAN ..."
+    for i in $(seq 0 126) $(seq 128 223); do
+        sudo route -n add -net "${i}.0.0.0/8" "$VM_LAN" >/dev/null 2>&1 || true
+    done
+
+    echo "[gateway] 本地子网 $subnet -> $WIFI_IFACE"
+    sudo route -n add -net "$subnet" -interface "$WIFI_IFACE" >/dev/null 2>&1 || true
+
+    # 设置 DNS 指向 VM
+    dns_set_vm
+
+    touch "$GATEWAY_MARKER"
+    echo "[gateway] 已开启"
+}
+
+gateway_off() {
+    echo "[gateway] 移除 /8 路由..."
+    for i in $(seq 0 126) $(seq 128 223); do
+        sudo route -n delete -net "${i}.0.0.0/8" "$VM_LAN" >/dev/null 2>&1 || true
+    done
+
+    # 恢复 DNS
+    dns_restore
+
+    rm -f "$GATEWAY_MARKER"
+    echo "[gateway] 已关闭"
+}
+
+gateway_active() {
+    [[ -f "$GATEWAY_MARKER" ]]
+}
+
+# ── commands ─────────────────────────────────────────────
+
+cmd_start() {
+    if vm_running; then
+        echo "[vm] 已在运行 (PID=$(cat "$PID_FILE"))"
+    else
+        echo "[vm] 启动中..."
+        bash "$SCRIPT_DIR/start.sh"
+        echo "[vm] 等待 VM 就绪..."
+        local tries=0
+        while ! vm_reachable && (( tries < 30 )); do
+            sleep 1
+            (( tries++ ))
+        done
+        if vm_reachable; then
+            echo "[vm] 网络就绪 ($VM_LAN 可达)"
+            # 等待 GNB 隧道建立（peer 可达）
+            echo "[vm] 等待 VPN 隧道..."
+            tries=0
+            while (( tries < 20 )); do
+                if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 openwrt-qemu "ping -c1 -W2 10.182.236.180" &>/dev/null; then
+                    echo "[vm] VPN 隧道就绪"
+                    break
+                fi
+                sleep 2
+                (( tries++ ))
+            done
+            if (( tries >= 20 )); then
+                echo "[vm] VPN 隧道超时（GNB 可能未就绪）"
+            fi
+        else
+            echo "[vm] 超时：$VM_LAN 不可达"
+            return 1
+        fi
+    fi
+}
+
+cmd_stop() {
+    if gateway_active; then
+        gateway_off
+    fi
+    if vm_running; then
+        bash "$SCRIPT_DIR/stop.sh"
+    else
+        echo "[vm] 未在运行"
+    fi
+}
+
+cmd_on() {
+    if ! vm_reachable; then
+        echo "[vm] $VM_LAN 不可达，先执行: vm start"
+        exit 1
+    fi
+    gateway_on
+}
+
+cmd_off() {
+    gateway_off
+}
+
+cmd_status() {
+    echo "=== VM ==="
+    if vm_running; then
+        echo "  状态: 运行中 (PID=$(sudo cat "$PID_FILE" 2>/dev/null))"
+    else
+        echo "  状态: 未运行"
+    fi
+    if vm_reachable; then
+        echo "  网络: $VM_LAN 可达"
+    else
+        echo "  网络: $VM_LAN 不可达"
+    fi
+
+    echo ""
+    echo "=== 网关 ==="
+    if gateway_active; then
+        echo "  模式: 开启（流量走 VM）"
+    else
+        echo "  模式: 关闭（直连）"
+    fi
+    echo "  WiFi: $(ipconfig getifaddr "$WIFI_IFACE" 2>/dev/null || echo 'N/A') -> $(current_wifi_gateway)"
+    echo "  DNS:  $(networksetup -getdnsservers "Wi-Fi" 2>/dev/null | head -1 || echo 'N/A')"
+    echo "  路由: $(netstat -rn | grep "$VM_LAN" | wc -l | tr -d ' ') 条 /8 路由指向 VM"
+}
+
+cmd_check() {
+    if ! vm_reachable; then
+        echo "[FAIL] $VM_LAN 不可达"
+        exit 1
+    fi
+    echo "[OK] VM 可达"
+
+    echo ""
+    echo "--- DNS ---"
+    echo "  系统 DNS: $(networksetup -getdnsservers "Wi-Fi" 2>/dev/null | head -1 || echo 'N/A')"
+    echo "  解析 www.google.com:"
+    local dns_result
+    dns_result="$(nslookup www.google.com 2>/dev/null | grep 'Address:' | tail -1)" || dns_result="(失败)"
+    echo "    $dns_result"
+
+    echo ""
+    echo "--- route get 9.9.9.9 ---"
+    route -n get 9.9.9.9 | grep -E 'interface|gateway'
+
+    echo ""
+    echo "--- ping 9.9.9.9 ---"
+    ping -c2 -t5 9.9.9.9 2>&1 || true
+
+    echo ""
+    echo "--- traceroute ---"
+    traceroute -m3 -w2 9.9.9.9 2>&1 || true
+
+    echo ""
+    echo "--- egress IP ---"
+    local egress
+    egress="$(curl -4s --max-time 10 https://api.ipify.org 2>/dev/null)" || egress="(timeout)"
+    local wifi_ip
+    wifi_ip="$(ipconfig getifaddr "$WIFI_IFACE" 2>/dev/null || echo 'N/A')"
+    echo "  出口 IP: $egress"
+    echo "  WiFi IP: $wifi_ip"
+    if [[ "$egress" != "(timeout)" ]] && [[ "$egress" != "$wifi_ip" ]]; then
+        echo "  -> 流量经过 VM/VPN"
+    else
+        echo "  -> 直连或超时"
+    fi
+}
+
+cmd_restart() {
+    cmd_stop
+    sleep 2
+    cmd_start
+}
+
+# ── main ─────────────────────────────────────────────────
+
+usage() {
+    cat <<'EOF'
+用法: vm <command>
+
+命令:
+  start     启动 VM
+  stop      停止 VM（自动恢复路由）
+  on        开启网关模式（流量走 VM 分流）
+  off       关闭网关模式（恢复直连）
+  status    查看状态
+  check     测试连通性
+  restart   重启 VM
+EOF
+    exit 1
+}
+
+case "${1:-}" in
+    start)   cmd_start ;;
+    stop)    cmd_stop ;;
+    on)      cmd_on ;;
+    off)     cmd_off ;;
+    status)  cmd_status ;;
+    check)   cmd_check ;;
+    restart) cmd_restart ;;
+    *)       usage ;;
+esac

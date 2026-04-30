@@ -57,25 +57,43 @@ function M.check_deps()
     step("kmod-tun", tun_ok, tun_ok and "已加载" or "安装/加载失败（VPN 可能无法使用 tun 设备）")
 
     -- 3. curl TLS 修复（mbedTLS → GnuTLS，解决 Let's Encrypt 握手失败）
+    -- 注意：OpenWrt 24.x 上 libcurl-gnutls4 ABI 可能与 curl binary 不兼容，
+    -- 因此先检测 curl 是否已经可用，可用则跳过替换。
     local curl_lib = "/usr/lib/libcurl.so.4"
     local gnutls_lib = "/usr/lib/libcurl-gnutls.so.4"
-    local gnutls_installed = util.trim(util.exec(
-        "opkg list-installed 2>/dev/null | grep -c 'libcurl-gnutls'") or "0") ~= "0"
-    if not gnutls_installed then
-        util.exec("opkg install libcurl-gnutls4 -q 2>/dev/null")
-        gnutls_installed = io.open(gnutls_lib, "r") ~= nil
-    end
-    if gnutls_installed then
-        -- 检查 symlink 是否已指向 gnutls
-        local link_target = util.trim(util.exec("readlink " .. curl_lib .. " 2>/dev/null") or "")
-        if not link_target:find("gnutls") then
-            util.exec("[ ! -f " .. curl_lib .. ".mbedtls.bak ] && cp -p " .. curl_lib
-                .. " " .. curl_lib .. ".mbedtls.bak 2>/dev/null; true")
-            util.exec("ln -sf " .. gnutls_lib .. " " .. curl_lib)
-        end
-        step("curl-tls", true, "GnuTLS backend 已启用")
+    -- 先测试 curl 能否正常运行（无符号冲突）
+    local curl_works = util.trim(util.exec(
+        "curl --version 2>/dev/null | grep -c 'curl'") or "0") ~= "0"
+    if curl_works then
+        step("curl-tls", true, "curl 可用（跳过 gnutls 替换）")
     else
-        step("curl-tls", false, "libcurl-gnutls4 安装失败（HTTPS 可能受影响）")
+        local gnutls_installed = util.trim(util.exec(
+            "opkg list-installed 2>/dev/null | grep -c 'libcurl-gnutls'") or "0") ~= "0"
+        if not gnutls_installed then
+            util.exec("opkg install libcurl-gnutls4 -q 2>/dev/null")
+            gnutls_installed = io.open(gnutls_lib, "r") ~= nil
+        end
+        if gnutls_installed then
+            -- 检查 symlink 是否已指向 gnutls
+            local link_target = util.trim(util.exec("readlink " .. curl_lib .. " 2>/dev/null") or "")
+            if not link_target:find("gnutls") then
+                util.exec("[ ! -f " .. curl_lib .. ".mbedtls.bak ] && cp -p " .. curl_lib
+                    .. " " .. curl_lib .. ".mbedtls.bak 2>/dev/null; true")
+                util.exec("ln -sf " .. gnutls_lib .. " " .. curl_lib)
+            end
+            -- 验证替换后 curl 是否正常
+            local curl_ok_after = util.trim(util.exec(
+                "curl --version 2>/dev/null | grep -c 'curl'") or "0") ~= "0"
+            if curl_ok_after then
+                step("curl-tls", true, "GnuTLS backend 已启用")
+            else
+                -- 替换后 curl 坏了（ABI 不兼容），回滚到原始
+                util.exec("ln -sf /usr/lib/libcurl.so.4.8.0 " .. curl_lib .. " 2>/dev/null; true")
+                step("curl-tls", false, "libcurl-gnutls4 ABI 不兼容，已回滚（HTTPS 可能受影响）")
+            end
+        else
+            step("curl-tls", false, "libcurl-gnutls4 安装失败（HTTPS 可能受影响）")
+        end
     end
 
     -- 4. ca-bundle
@@ -482,16 +500,28 @@ mkdir -p "$BINDIR"
 # 0. 解决 OpenWrt mbedTLS + Let's Encrypt TLS 握手失败（-0x7780）
 # curl 链接 mbedTLS 2.28.x 对 certbot/ISRG Root X1 有已知兼容问题
 # 方案：安装 libcurl-gnutls4，将 libcurl.so.4 symlink 指向 gnutls 版（ABI 兼容）
+# 注意：OpenWrt 24.x 上 libcurl-gnutls4 ABI 可能不兼容，先验证 curl 是否已可用
 GNUTLS_LIB="/usr/lib/libcurl-gnutls.so.4"
 CURL_LIB="/usr/lib/libcurl.so.4"
-if ! opkg list-installed 2>/dev/null | grep -q '^libcurl-gnutls'; then
-    log "安装 libcurl-gnutls4 (修复 mbedTLS TLS握手失败)..."
-    opkg install libcurl-gnutls4 -q 2>/dev/null
-fi
-if [ -f "$GNUTLS_LIB" ]; then
-    [ ! -f "${CURL_LIB}.mbedtls.bak" ] && cp -p "$CURL_LIB" "${CURL_LIB}.mbedtls.bak" 2>/dev/null
-    ln -sf "$GNUTLS_LIB" "$CURL_LIB"
-    log "libcurl.so.4 → gnutls 版 (TLS修复已应用)"
+if curl --version >/dev/null 2>&1; then
+    log "curl 可用，跳过 gnutls 替换"
+else
+    if ! opkg list-installed 2>/dev/null | grep -q '^libcurl-gnutls'; then
+        log "安装 libcurl-gnutls4 (修复 mbedTLS TLS握手失败)..."
+        opkg install libcurl-gnutls4 -q 2>/dev/null
+    fi
+    if [ -f "$GNUTLS_LIB" ]; then
+        [ ! -f "${CURL_LIB}.mbedtls.bak" ] && cp -p "$CURL_LIB" "${CURL_LIB}.mbedtls.bak" 2>/dev/null
+        ln -sf "$GNUTLS_LIB" "$CURL_LIB"
+        # 验证替换后 curl 是否正常，不正常则回滚
+        if ! curl --version >/dev/null 2>&1; then
+            log "gnutls ABI 不兼容，回滚 libcurl..."
+            ln -sf /usr/lib/libcurl.so.4.8.0 "$CURL_LIB" 2>/dev/null || \
+                ln -sf "${CURL_LIB}.mbedtls.bak" "$CURL_LIB" 2>/dev/null || true
+        else
+            log "libcurl.so.4 → gnutls 版 (TLS修复已应用)"
+        fi
+    fi
 fi
 
 # 1. 下载（三级 fallback：curl → curl-k → wget-nochk）

@@ -27,43 +27,31 @@ opkg remove luci-app-mynet
 
 ## 二、手动文件部署（开发 / 快速测试）
 
+推荐使用 `debug/sync.sh` 完成所有步骤：
+
 ```bash
-ROUTER=root@192.168.0.2
+# 默认目标：openwrt-qemu（/etc/hosts 别名）
+bash debug/sync.sh all
 
-# 控制器
-scp luasrc/controller/mynet.lua \
-    $ROUTER:/usr/lib/lua/luci/controller/
+# 指定目标路由器（物理机或任意 SSH 可达地址）
+ROUTER=root@192.168.9.1 bash debug/sync.sh all
+```
 
-# 模型
-ssh $ROUTER "mkdir -p /usr/lib/lua/luci/model/mynet"
-scp luasrc/model/mynet/*.lua \
-    $ROUTER:/usr/lib/lua/luci/model/mynet/
+`ROUTER` 环境变量默认为 `openwrt-qemu`，可在调用时覆盖。
 
-# 视图模板
-ssh $ROUTER "mkdir -p /usr/share/luci/view/mynet"
-scp luasrc/view/mynet/*.htm \
-    $ROUTER:/usr/share/luci/view/mynet/
+`sync.sh all` 等价于依次执行：
 
-# 静态资源
-ssh $ROUTER "mkdir -p /www/luci-static/resources/mynet/css \
-                      /www/luci-static/resources/mynet/js"
-scp htdocs/luci-static/resources/mynet/css/mynet.css \
-    $ROUTER:/www/luci-static/resources/mynet/css/
-scp htdocs/luci-static/resources/mynet/js/mynet.js \
-    $ROUTER:/www/luci-static/resources/mynet/js/
+```bash
+bash debug/sync.sh build   # 打包 ipk
+bash debug/sync.sh deploy  # scp 上传 + opkg install
+bash debug/sync.sh scripts # 同步 runtime 脚本 + proxy 脚本
+bash debug/sync.sh firewall # 防火墙安装
+```
 
-# 代理 hooks
-ssh $ROUTER "mkdir -p /etc/mynet/scripts/proxy/hooks"
-scp scripts/proxy/hooks/*.sh \
-    $ROUTER:/etc/mynet/scripts/proxy/hooks/
+若只需推送 Lua/视图变更而不重建 ipk：
 
-# 默认配置（不覆盖已存在的）
-ssh $ROUTER "mkdir -p /etc/mynet/conf"
-scp -n root/etc/mynet/conf/config.json \
-    $ROUTER:/etc/mynet/conf/ 2>/dev/null || true
-
-# 清理缓存
-ssh $ROUTER "rm -rf /tmp/luci-*"
+```bash
+ROUTER=root@192.168.9.1 bash debug/sync.sh lua
 ```
 
 ---
@@ -119,8 +107,12 @@ http://<router-ip>/cgi-bin/luci/admin/services/mynet
 | 配置 | `/etc/mynet/conf/config.json` | API 基础地址、超时 |
 | 凭证 | `/etc/mynet/conf/credential.json` | 登录 Token（自动生成）|
 | 路由 | `/etc/mynet/conf/route.conf` | 内核 OS 路由输入文件 |
-| 代理 hooks | `/etc/mynet/scripts/proxy/hooks/` | 代理启停钩子脚本 |
-| VPN init | `/etc/init.d/mynet` | 由 `mynet` 主程序包提供 |
+| 代理角色 | `/etc/mynet/conf/proxy/proxy_role.conf` | 代理持久化配置（DNS_MODE / PROXY_MODE 等）|
+| 代理状态 | `/etc/mynet/var/proxy_state.json` | 运行时状态（上次启动参数）|
+| 代理策略参数 | `/etc/mynet/var/proxy_policy_params.env` | bash 环境变量文件，由 proxy.lua start() 更新后传给 route_policy.sh |
+| 代理 hooks | `/etc/mynet/scripts/proxy/hooks/` | 代理启停钩子脚本（post_start / pre_start / stop）|
+| route_policy.sh | `/etc/mynet/scripts/proxy/route_policy.sh` | 策略路由/防火墙管理主脚本（proxy.lua 调用此路径）|
+| VPN init | `/etc/init.d/mynet` | 由 `rc.mynet` 提供 |
 
 ---
 
@@ -142,5 +134,8 @@ opkg install luci-base curl libcurl-gnutls4 luci-lib-jsonc bash ca-bundle
 ## 七、路由与代理部署注意事项
 
 - `/etc/mynet/conf/route.conf` 中写入的是 OS 路由，格式应为 `cidr dev <vpn_iface>`
-- 代理启停最终走 Lua `proxy.start()` / `proxy.stop()`，不要在文档或脚本中再描述成直接调用 shell `proxy.sh start/stop`
-- 更新 `.lua` / `.htm` 后，如页面未刷新，先清理 `/tmp/luci-*` 缓存再重试
+- 代理启停最终走 Lua `proxy.start()` / `proxy.stop()`，不要直接调用 shell `route_policy.sh start/stop`
+- `proxy.lua` 的 `ROUTE_POLICY_SH` 常量指向 `/etc/mynet/scripts/proxy/route_policy.sh`（**非** `openwrt/` 子目录）；`sync.sh` 同时将脚本安装到两个路径以保持兼容
+- `proxy_policy_params.env` 由 `proxy.lua start()` 在调用 `route_policy.sh start` 前更新；`route_policy.sh` 只读取不生成此文件
+- DNS 劫持（`DNS_MODE=redirect`）使用 nftables DNAT，规则限定 `iifname br-lan`，**只拦截 LAN 客户端 DNS**；路由器自身 DNS 仍走 dnsmasq upstream
+- 更新 `.lua` / `.htm` 后如页面未刷新，清理 `/tmp/luci-*` 缓存再重试

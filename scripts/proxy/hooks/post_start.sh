@@ -47,4 +47,12 @@ LUA
 }
 
 log_proxy "proxy started successfully"
+
+# 若本机有 smartdns，GNB 隧道已就绪后重载，确保连接到 peer DNS 上游
+# 仅在 smartdns 正在运行时执行，对无 smartdns 的设备（如 9.1）无影响
+if command -v smartdns >/dev/null 2>&1 && /etc/init.d/smartdns status 2>/dev/null | grep -q running; then
+    /etc/init.d/smartdns reload 2>/dev/null
+    log_proxy "smartdns reloaded after GNB tunnel up"
+fi
+
 exit 0

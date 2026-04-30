@@ -13,7 +13,7 @@ define Package/luci-app-mynet
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI support for MyNet VPN
-  DEPENDS:=+luci-base +curl +luci-lib-jsonc +bash +kmod-tun
+  DEPENDS:=+luci-base +curl +luci-lib-jsonc +bash +kmod-tun +ucode-mod-lua +luci-lib-base +luci-lib-nixio +luci-lib-ip +liblucihttp-lua +libubus-lua
   PKGARCH:=all
 endef
 
@@ -96,6 +96,16 @@ define Package/luci-app-mynet/install
 	# --- Runtime directories (empty, needed at runtime) ---
 	$(INSTALL_DIR) $(1)/etc/mynet/logs
 	$(INSTALL_DIR) $(1)/etc/mynet/driver/gnb
+
+	# --- LuCI menu.d (ucode-based LuCI route registration) ---
+	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
+	$(INSTALL_DATA) ./root/usr/share/luci/menu.d/luci-app-mynet.json \
+		$(1)/usr/share/luci/menu.d/
+
+	# --- rpcd ACL ---
+	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
+	$(INSTALL_DATA) ./root/usr/share/rpcd/acl.d/luci-app-mynet.json \
+		$(1)/usr/share/rpcd/acl.d/
 
 	# --- i18n translations ---
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n

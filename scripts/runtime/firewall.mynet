@@ -221,6 +221,15 @@ add_masq_rules() {
         else
             log "✓ Masq rule already exists: -s $vpn_network"
         fi
+
+        # MSS clamping: 防止经 VPN 隧道的大 TCP 报文被分片/丢弃（gnb_tun MTU < 1500）
+        if ! iptables -t mangle -C FORWARD -o "$vpn_device" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+            log "Adding TCPMSS clamping rule for $vpn_device"
+            iptables -t mangle -A FORWARD -o "$vpn_device" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+            log "✓ TCPMSS clamping added for $vpn_device"
+        else
+            log "✓ TCPMSS clamping already exists for $vpn_device"
+        fi
     fi
     
     log "NAT masq rules configured successfully"
@@ -328,6 +337,12 @@ fi
 if ! iptables -t nat -C POSTROUTING -s "$VPN_NETWORK" -j MASQUERADE 2>/dev/null; then
     iptables -t nat -A POSTROUTING -s "$VPN_NETWORK" -j MASQUERADE -m comment --comment "MyNet VPN->LAN masq"
     logger -t "firewall.mynet.include" "Added: -s $VPN_NETWORK MASQUERADE"
+fi
+
+# MSS clamping: 防止 VPN 隧道的大 TCP 报文被分片丢弃
+if ! iptables -t mangle -C FORWARD -o "$VPN_DEVICE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+    iptables -t mangle -A FORWARD -o "$VPN_DEVICE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    logger -t "firewall.mynet.include" "Added TCPMSS clamping for $VPN_DEVICE"
 fi
 
 logger -t "firewall.mynet.include" "NAT masq rules restored successfully"

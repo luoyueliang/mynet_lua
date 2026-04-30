@@ -5,8 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$SCRIPT_DIR/qemu.pid"
 
 if [[ -f "$PID_FILE" ]]; then
-    PID=$(cat "$PID_FILE")
-    if sudo kill -0 "$PID" 2>/dev/null; then
+    PID=$(sudo cat "$PID_FILE" 2>/dev/null) || true
+    if [[ -n "$PID" ]] && sudo kill -0 "$PID" 2>/dev/null; then
         sudo kill "$PID"
         echo "[stop] QEMU 已停止 (PID=$PID)"
     else

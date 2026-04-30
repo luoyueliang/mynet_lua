@@ -62,7 +62,7 @@ MyNet API 服务端           GNB VPN + 系统工具
 | `node.lua` | ~1450 | 节点管理、配置同步（bundle + legacy fallback）、密钥管理、GNB 启停 |
 | `zone.lua` | ~60 | Zone 区域列表获取 |
 | `guest.lua` | ~580 | 离线模式：网络创建/导入/导出、节点 CRUD、路由生成 |
-| `proxy.lua` | ~620 | 代理分流：策略路由注入/恢复、ipset、DNS 劫持 |
+| `proxy.lua` | ~620 | 代理分流：策略路由注入/恢复、nftables nft set、DNS 劫持（redirect 模式）|
 | `system.lua` | ~620 | 系统检测、防火墙管理、依赖检查、心跳 |
 | `gnb_installer.lua` | ~580 | GNB 平台检测、manifest 解析、后台下载安装 |
 | `validator.lua` | ~180 | 10 项配置完整性检查 + 自动修复 |
@@ -129,11 +129,16 @@ MyNet API 服务端           GNB VPN + 系统工具
 启动：/etc/init.d/mynet start
   → 读取 mynet.conf（NODE_ID、路径）
   → modprobe tun
+  → 执行 proxy/pre_start.sh hook（预注入 GNB 数据路由）
   → 启动 gnb -c {conf_dir} -d
-  → route.mynet apply（注入路由）
+  → route.mynet apply（注入路由表项）
   → firewall.mynet apply（配置防火墙 zone）
+  → 执行 proxy/post_start.sh hook（若 PROXY_ENABLED=1 则调用 proxy.start()）
 
 停止：/etc/init.d/mynet stop
+  → 执行 proxy/stop.sh hook
+      → route_policy.sh stop（flush nft chain、删除 ip rule/table 200、恢复 dnsmasq）
+      → dns_intercept chain 清除（若 DNS_MODE=redirect）
   → 终止 gnb 进程
   → route.mynet clear（清除路由）
 ```
@@ -174,7 +179,9 @@ MyNet API 服务端           GNB VPN + 系统工具
 │   ├── config.json         设备配置
 │   ├── credential.json     登录凭证 (0600)
 │   ├── mynet.conf          GNB 主配置
-│   └── zone.json           当前 Zone
+│   ├── zone.json           当前 Zone
+│   └── proxy/
+│       └── proxy_role.conf     代理持久化配置（PROXY_ENABLED/DNS_MODE/PROXY_MODE 等）
 ├── driver/gnb/             GNB_DRIVER_ROOT
 │   ├── bin/gnb             GNB 二进制
 │   ├── bin/gnb_ctl         GNB 控制工具
@@ -188,6 +195,16 @@ MyNet API 服务端           GNB VPN + 系统工具
 │   ├── route.mynet         路由管理脚本
 │   ├── firewall.mynet      防火墙管理脚本
 │   └── proxy/              代理分流脚本
+│       ├── route_policy.sh     策略路由/nftables 主脚本（proxy.lua 调用此路径）
+│       ├── proxy.sh            分流规则生成（IP 列表 → nft set）
+│       └── hooks/
+│           ├── pre_start.sh    GNB 启动前预注入代理路由
+│           ├── post_start.sh   GNB 启动后启动代理（读 proxy_role.conf）
+│           └── stop.sh         停止代理 + 清除 nft 策略路由
+├── var/                    运行时状态（自动建立）
+│   ├── proxy_state.json    代理状态（mode/dns_mode/start_ts/region）
+│   └── proxy_policy_params.env  bash 参数文件；proxy.lua start() 在调 route_policy.sh 前更新
+│                           DNS_MODE/DNS_SERVER 字段，route_policy.sh 只读取不生成
 └── logs/                   运行日志
 ```
 

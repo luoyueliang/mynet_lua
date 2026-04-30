@@ -539,15 +539,25 @@ local PROXY_MARKER_END          = "#----proxy end----"
 local PROXY_SERVER_MARKER_BEGIN = "#----proxy-server start----"
 local PROXY_SERVER_MARKER_END   = "#----proxy-server end----"
 
+-- 兼容新旧两种 proxy marker 格式：
+--   新格式: #----proxy start----
+--   旧格式: #---------proxy start {nodeId}--------
+local function is_proxy_begin(line)
+    if line:sub(1,1) ~= "#" then return false end
+    return line:find(PROXY_MARKER_BEGIN, 1, true)
+        or line:find(PROXY_SERVER_MARKER_BEGIN, 1, true)
+        or line:find("proxy start", 1, true)
+end
+local function is_proxy_end(line)
+    if line:sub(1,1) ~= "#" then return false end
+    return line:find(PROXY_MARKER_END, 1, true)
+        or line:find(PROXY_SERVER_MARKER_END, 1, true)
+        or line:find("proxy end", 1, true)
+end
+
 local function update_route_skip_state(line, skipping)
-    if line:find(PROXY_MARKER_BEGIN, 1, true)
-        or line:find(PROXY_SERVER_MARKER_BEGIN, 1, true) then
-        return true
-    end
-    if line:find(PROXY_MARKER_END, 1, true)
-        or line:find(PROXY_SERVER_MARKER_END, 1, true) then
-        return false
-    end
+    if is_proxy_begin(line) then return true end
+    if is_proxy_end(line)   then return false end
     return skipping
 end
 
@@ -1099,6 +1109,12 @@ function M.generate_route_conf(node_id)
         return nil, "route.conf is empty"
     end
 
+    -- 剔除 proxy 注入段（route_inject 已将策略路由追加到此文件，
+    -- 必须在生成 OS 级 route.conf 前移除，否则 /8、/16 大段路由
+    -- 会被误认为子网路由写入 conf/route.conf 并由 route.mynet 添加）
+    local proxy_m = require("luci.model.mynet.proxy")
+    route_content = proxy_m.strip_route_injections(route_content)
+
     local entries = parse_gnb_route_conf(route_content)
     if #entries == 0 then
         return nil, "no routes parsed from route.conf"
@@ -1274,7 +1290,7 @@ function M.start_gnb(node_id)
 
     util.ensure_dir(conf)
     local cmd = string.format(
-        "'%s' -c '%s' --pf-route </dev/null >> '%s' 2>&1 & echo $! > '%s'",
+        "'%s' -c '%s' </dev/null >> '%s' 2>&1 & echo $! > '%s'",
         bin, conf, log, pid)
     util.exec(cmd)
 

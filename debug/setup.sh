@@ -3,11 +3,11 @@
 # 用法: bash debug/setup.sh
 #
 # 仅支持 Apple Silicon (arm64)：armsr-armv8 镜像 + qemu-system-aarch64 + HVF 加速
-# 网络模式：vmnet（WAN=vmnet-shared 上网, LAN=vmnet-host 管理口 192.168.101.2）
+# 网络模式：vmnet（LAN=vmnet-host 管理口 192.168.101.2, WAN=vmnet-bridged WiFi桥接）
 
 set -euo pipefail
 
-OPENWRT_VERSION="23.05.5"
+OPENWRT_VERSION="24.10.1"
 
 # 仅支持 Apple Silicon
 HOST_ARCH="$(uname -m)"
@@ -17,8 +17,8 @@ if [[ "$HOST_ARCH" != "arm64" ]]; then
 fi
 
 TARGET="armsr-armv8"
-IMG_GZ="openwrt-${OPENWRT_VERSION}-armsr-armv8-generic-ext4-combined.img.gz"
-IMG_RAW="openwrt-${OPENWRT_VERSION}-armsr-armv8-generic-ext4-combined.img"
+IMG_GZ="openwrt-${OPENWRT_VERSION}-armsr-armv8-generic-ext4-combined-efi.img.gz"
+IMG_RAW="openwrt-${OPENWRT_VERSION}-armsr-armv8-generic-ext4-combined-efi.img"
 IMG_QCOW2="openwrt-${OPENWRT_VERSION}-armsr-armv8.qcow2"
 BASE_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/armsr/armv8"
 echo "[setup] Apple Silicon (arm64) — armsr-armv8 + HVF + vmnet"
@@ -63,11 +63,11 @@ if [[ ! -f "$IMG_QCOW2" ]] && [[ -f "$IMG_RAW" ]]; then
         DEBUGFS="/opt/homebrew/opt/e2fsprogs/sbin/debugfs"
     fi
 
-    echo "[setup] 预配置 OpenWrt 网络（vmnet: WAN=DHCP, LAN=192.168.101.2）..."
+    echo "[setup] 预配置 OpenWrt 网络（vmnet: LAN=192.168.101.2, WAN=DHCP bridged）..."
 
     # OpenWrt UCI 网络配置：
-    #   WAN (eth0): vmnet-shared DHCP 上网
-    #   LAN (eth1): vmnet-host 静态 192.168.101.2（管理口）
+    #   LAN (eth0): vmnet-host 静态 192.168.101.2（管理口）
+    #   WAN (eth1): vmnet-bridged DHCP — 直接从家庭路由器获取 IP 和 DNS
     NETWORK_UCI="config interface 'loopback'
 \toption device 'lo'
 \toption proto 'static'
@@ -78,9 +78,9 @@ config globals 'globals'
 \toption ula_prefix 'fd0b:1c3b:ad07::/48'
 
 config device 'br_lan_dev'
-\toption name 'br-lan'
-\toption type 'bridge'
-\tlist ports 'eth1'
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'eth0'
 
 config interface 'lan'
 \toption device 'br-lan'
@@ -89,14 +89,11 @@ config interface 'lan'
 \toption netmask '255.255.255.0'
 
 config interface 'wan'
-\toption device 'eth0'
+	option device 'eth1'
 \toption proto 'dhcp'
-\toption peerdns '0'
-\tlist dns '8.8.8.8'
-\tlist dns '8.8.4.4'
 
 config interface 'wan6'
-\toption device 'eth0'
+	option device 'eth1'
 \toption proto 'dhcpv6'
 "
 
