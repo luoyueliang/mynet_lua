@@ -115,7 +115,7 @@ en0 WiFi (macOS 自己的 MAC)
 
 | 资源 | 配置 | 说明 |
 |------|------|------|
-| 内存 | 136M | UEFI 固件占 25M，剩余 111M 运行内核 + nft set + GNB + dnsmasq |
+| 内存 | 128M | UEFI 固件占 25M，剩余可用 ~105M。经过服务裁剪，128M 刚好够用 |
 | CPU | 2 核 | 转发和 nft 匹配都是轻量操作，2 核绑绑有余 |
 | 磁盘 | 1-2G | qcow2 镜像，随用随扩 |
 | 硬件加速 | HVF | Apple 原生虚拟化，`-machine virt,accel=hvf`，接近原生性能 |
@@ -125,15 +125,12 @@ en0 WiFi (macOS 自己的 MAC)
 -machine virt,accel=hvf    # Apple HVF 硬件加速（必须）
 -cpu host                   # 透传宿主 CPU 特性
 -smp 2                      # 2 核
--m 136M                     # 136M 内存（UEFI 占 25M，128M 会 OOM）
+-m 128M                     # 128M 内存
 ```
 
-**为什么 136M：** QEMU 的 UEFI 固件（edk2-aarch64-code.fd）加载后占用 ~25M，剩余 111M 给 Linux 内核和用户空间。实际测试：
-- 128M → nft -f OOM（可用 36M，峰值超限）
-- 136M → nft -f 成功（可用 37M，刚好够用）
-- 内核 + GNB(8.7M) + nft set(4.3M) + dnsmasq(1.1M) + 其他服务 ≈ 42M
+**为什么 128M：** QEMU 的 UEFI 固件（edk2-aarch64-code.fd）占用 ~25M 开销。128M 配置下 Linux 可用 ~105M，内核 + GNB(8.7M) + nft set(4.3M) + dnsmasq(1.1M) + 其他服务 ≈ 42M。实测 128M 是 UEFI + nft set 加载的精确下限。
 
-> nft -f 本身是批处理优化的，加载 1.7 万条只需 ~0.1 秒。OOM 通常发生在 VM 启动阶段多个服务同时争抢内存时，与 nft 本身无关。
+> 需要裁剪不必要的 OpenWrt 服务以释放 ~10M 内存。详见 `fix-network.sh`。
 
 **HVF 硬件加速：** macOS 的 Hypervisor.framework（QEMU 中的 `accel=hvf`）直接使用 Apple Silicon 的虚拟化扩展，VM 指令在硬件上执行，无需二进制翻译。性能接近原生，启动时间 < 1 秒。没有 HVF 的话，QEMU 会退回到 TCG（软件模拟），性能下降 10-50 倍。
 
@@ -311,6 +308,36 @@ ping 192.168.10.1
 ## 6. VM 内的分流实现
 
 VM 内的分流不限于 OpenWrt。任何 Linux 发行版，只要能装 nftables 和 VPN 客户端，都可以。
+
+### 6.0 OpenWrt 内存优化
+
+要让 OpenWrt 在 128M 内存下流畅运行 nft set + GNB，必须裁剪不必要的服务。`fix-network.sh` 中执行以下优化：
+
+```bash
+# 关闭不必要的服务（节省 ~10MB 内存）
+for svc in uhttpd odhcpd cron packet_steering gpio_switch; do
+    /etc/init.d/$svc disable
+done
+```
+
+| 服务 | 功能 | 是否必要 | 节省内存 |
+|------|------|---------|---------|
+| uhttpd | LuCI Web 管理界面 | ❌（可通过 SSH 管理） | ~2 MB |
+| odhcpd | DHCPv6 服务器 | ❌（VM 不做 DHCP） | ~1 MB |
+| cron | 定时任务 | ❌ | <1 MB |
+| packet_steering | CPU 亲和性优化 | ❌（VM 只有 2 核） | <1 MB |
+| gpio_switch | GPIO 控制 | ❌（VM 无 GPIO） | <1 MB |
+| rpcd | OpenWrt RPC 框架 | ❌（不用 LuCI 就不需要） | ~2.3 MB |
+
+裁剪后，128M VM 的内存分配：
+- UEFI 固件占 25M
+- Linux 内核 + 服务 ≈ 32M
+- GNB 进程 ≈ 9M  
+- nft set（1.7 万条）≈ 4M
+- dnsmasq ≈ 1M
+- 空闲 ≈ 15M（余量）
+
+> 如果这些服务被禁用后内存仍然不足，检查 `/proc/meminfo` 中的 `Slab` 字段。nft -f 的峰值内存可能超过最终占用。加载 nft set 时添加 `sleep 3` 延迟可以让系统先稳定下来。
 
 ### 6.1 最小要求
 
