@@ -103,7 +103,7 @@ gateway_on() {
     dns_set_vm
 
     # 清除 bridge100 上的 REJECT 克隆路由缓存
-    sudo route -n flush 2>/dev/null || true
+    sudo route -n flush >/dev/null 2>&1 || true
 
     touch "$GATEWAY_MARKER"
     echo "[gateway] 已开启"

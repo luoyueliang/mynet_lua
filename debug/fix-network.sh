@@ -77,6 +77,13 @@ ssh $SSH_OPTS $ROUTER "
 " 2>/dev/null
 echo "[fix-network] MSS clamping (gnb_tun, rt mtu) 已配置 ✓"
 
+echo "[fix-network] 启用 ARP proxy..."
+ssh $SSH_OPTS $ROUTER "
+    echo 1 > /proc/sys/net/ipv4/conf/br-lan/proxy_arp
+    echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp
+" 2>/dev/null
+echo "[fix-network] ARP proxy 已启用 ✓"
+
 echo ""
 echo "[fix-network] 全部完成！"
 echo "              ssh openwrt-qemu"
