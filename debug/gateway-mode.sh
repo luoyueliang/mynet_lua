@@ -40,16 +40,23 @@ add_routes() {
         sudo route -n add -net "${i}.0.0.0/8" "$VM_LAN" >/dev/null 2>&1 || true
     done
 
-    # Local subnet via en0 (more specific than /8, overrides)
+    # 内网段走 VM（用于访问 GNB peer 的局域网）
+    # 先删掉 en0 上的克隆路由（/16），再加我们的
+    echo "[gateway] Adding 192.168.0.0/16 via VM (for GNB peer LANs)..."
+    sudo route -n delete -net 192.168.0.0/16 -interface "$WIFI_IFACE" >/dev/null 2>&1 || true
+    sudo route -n add -net 192.168.0.0/16 "$VM_LAN" >/dev/null 2>&1 || true
+
+    # Local subnet via en0 (more specific than /16, overrides)
     echo "[gateway] Adding $local_subnet via $WIFI_IFACE..."
     sudo route -n add -net "$local_subnet" -interface "$WIFI_IFACE" >/dev/null 2>&1 || true
 }
 
 delete_routes() {
-    echo "[gateway] Removing /8 routes..."
+    echo "[gateway] Removing routes..."
     for i in $(seq 0 126) $(seq 128 223); do
         sudo route -n delete -net "${i}.0.0.0/8" "$VM_LAN" >/dev/null 2>&1 || true
     done
+    sudo route -n delete -net 192.168.0.0/16 "$VM_LAN" >/dev/null 2>&1 || true
 }
 
 usage() {
