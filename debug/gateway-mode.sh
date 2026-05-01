@@ -49,6 +49,9 @@ add_routes() {
     # Local subnet via en0 (more specific than /16, overrides)
     echo "[gateway] Adding $local_subnet via $WIFI_IFACE..."
     sudo route -n add -net "$local_subnet" -interface "$WIFI_IFACE" >/dev/null 2>&1 || true
+
+    # 清除 bridge100 上的 REJECT 克隆路由缓存
+    sudo route -n flush 2>/dev/null || true
 }
 
 delete_routes() {
