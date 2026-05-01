@@ -67,12 +67,15 @@ echo "[fix-network] opkg 源已切换 ✓"
 echo "[fix-network] 验证 opkg update..."
 ssh $SSH_OPTS $ROUTER "rm -f /var/lock/opkg.lock && opkg update 2>&1 | grep -E 'Updated|error|Error'" 2>/dev/null
 
-echo "[fix-network] 配置 TCP MSS clamping (GNB 隧道 MTU 1450)..."
+echo "[fix-network] 配置 GNB 隧道 MSS clamping (rt mtu 自动计算)..."
 ssh $SSH_OPTS $ROUTER "
-    nft delete rule inet fw4 forward handle \$(nft -a list chain inet fw4 forward 2>/dev/null | grep 'tcp option maxseg' | grep -v grep | awk '{print \$NF}' | tail -1) 2>/dev/null || true
-    nft add rule inet fw4 forward tcp flags \& \(syn \| rst \| ack\) == syn tcp option maxseg size set 1400
+    # 检查是否已有 gnb_tun 的 MSS 规则
+    nft list chain inet fw4 mangle_postrouting 2>/dev/null | grep -q 'gnb_tun.*maxseg' || \
+    nft add rule inet fw4 mangle_postrouting oifname 'gnb_tun' tcp flags \& \(fin \| syn \| rst\) == syn tcp option maxseg size set rt mtu comment '\"!fw4: Zone mynet egress MTU fixing\"'
+    # 清理旧的手动 MSS 规则（如有）
+    nft delete rule inet fw4 forward handle \$(nft -a list chain inet fw4 forward 2>/dev/null | grep 'tcp option maxseg' | awk '{print \$NF}' | tail -1) 2>/dev/null || true
 " 2>/dev/null
-echo "[fix-network] MSS 1400 (双向 SYN+SYN-ACK) 已配置 ✓"
+echo "[fix-network] MSS clamping (gnb_tun, rt mtu) 已配置 ✓"
 
 echo ""
 echo "[fix-network] 全部完成！"
