@@ -90,6 +90,12 @@ gateway_on() {
         sudo route -n add -net "${i}.0.0.0/8" "$VM_LAN" >/dev/null 2>&1 || true
     done
 
+    # 内网段走 VM（用于访问 GNB peer 的局域网）
+    # 先删掉 en0 上的克隆路由（/16），再加我们的
+    echo "[gateway] 添加 192.168.0.0/16 -> VM（GNB peer LANs）..."
+    sudo route -n delete -net 192.168.0.0/16 -interface "$WIFI_IFACE" >/dev/null 2>&1 || true
+    sudo route -n add -net 192.168.0.0/16 "$VM_LAN" >/dev/null 2>&1 || true
+
     echo "[gateway] 本地子网 $subnet -> $WIFI_IFACE"
     sudo route -n add -net "$subnet" -interface "$WIFI_IFACE" >/dev/null 2>&1 || true
 
@@ -101,10 +107,11 @@ gateway_on() {
 }
 
 gateway_off() {
-    echo "[gateway] 移除 /8 路由..."
+    echo "[gateway] 移除路由..."
     for i in $(seq 0 126) $(seq 128 223); do
         sudo route -n delete -net "${i}.0.0.0/8" "$VM_LAN" >/dev/null 2>&1 || true
     done
+    sudo route -n delete -net 192.168.0.0/16 "$VM_LAN" >/dev/null 2>&1 || true
 
     # 恢复 DNS
     dns_restore
