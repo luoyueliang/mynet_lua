@@ -64,18 +64,10 @@ dns_set_vm() {
 }
 
 dns_restore() {
-    if [[ -f "$DNS_BACKUP" ]]; then
-        local servers
-        servers=$(cat "$DNS_BACKUP")
-        if [[ "$servers" == *"There aren't any DNS Servers"* ]] || [[ -z "$servers" ]]; then
-            echo "[dns] 恢复 DNS -> DHCP 自动"
-            sudo networksetup -setdnsservers "Wi-Fi" "Empty"
-        else
-            echo "[dns] 恢复 DNS -> $servers"
-            sudo networksetup -setdnsservers "Wi-Fi" $servers
-        fi
-        rm -f "$DNS_BACKUP"
-    fi
+    # 始终恢复为 DHCP 自动（避免重复 vm on/off 后备份值是 VM 的 DNS）
+    echo "[dns] 恢复 DNS -> DHCP 自动"
+    sudo networksetup -setdnsservers "Wi-Fi" "Empty"
+    rm -f "$DNS_BACKUP"
 }
 
 gateway_on() {

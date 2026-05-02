@@ -84,6 +84,127 @@ ssh $SSH_OPTS $ROUTER "
 " 2>/dev/null
 echo "[fix-network] ARP proxy 已启用 ✓"
 
+echo "[fix-network] 配置 dnsmasq DNS 分流（国内走 114，海外走 peer）..."
+ssh $SSH_OPTS $ROUTER "
+    # 安装依赖
+    opkg install python3-light >/dev/null 2>&1 || true
+
+    # dnsmasq 默认走国内 DNS
+    uci -q delete dhcp.@dnsmasq[0].server
+    uci add_list dhcp.@dnsmasq[0].server='114.114.114.114'
+    uci add_list dhcp.@dnsmasq[0].server='223.5.5.5'
+    uci set dhcp.@dnsmasq[0].noresolv='1'
+    uci add_list dhcp.@dnsmasq[0].confdir='/etc/dnsmasq.d'
+    uci commit dhcp
+
+    mkdir -p /etc/dnsmasq.d
+
+    # 下载 gfwlist
+    curl -s --max-time 30 -o /tmp/gfwlist.txt 'https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt' 2>/dev/null
+    if [ ! -s /tmp/gfwlist.txt ]; then
+        curl -s --max-time 30 -o /tmp/gfwlist.txt 'https://ghproxy.net/https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt' 2>/dev/null
+    fi
+
+    # 解析 gfwlist -> dnsmasq 配置
+    if [ -s /tmp/gfwlist.txt ]; then
+        python3 -c '
+import base64, re
+with open(\"/tmp/gfwlist.txt\") as f:
+    text = f.read()
+decoded = base64.b64decode(text).decode(\"utf-8\", errors=\"ignore\")
+domains = set()
+for line in decoded.split(\"\\n\"):
+    line = line.strip()
+    if not line or line[0] in (\"!\", \"@\", \"[\"):
+        continue
+    line = line.lstrip(\"||\").lstrip(\"|\").lstrip(\".\")
+    m = re.match(r\"[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+(\.[a-zA-Z]{2,})\", line)
+    if m:
+        d = m.group(0).lower()
+        if d.endswith(\".cn\") or d.endswith(\".com.cn\"):
+            continue
+        parts = d.split(\".\")
+        if len(parts) >= 2:
+            base = \".\".join(parts[-3:]) if len(parts) > 2 and parts[-2] in (\"com\", \"net\", \"org\", \"gov\", \"edu\", \"co\", \"ac\") else d
+            domains.add(base)
+with open(\"/etc/dnsmasq.d/gfwlist.conf\", \"w\") as f:
+    for d in sorted(domains):
+        f.write(f\"server=/{d}/10.182.236.180\\n\")
+print(f\"{len(domains)} domains\")
+' 2>/dev/null
+    fi
+
+    # 补充 gfwlist 遗漏的关键域名
+    cat >> /etc/dnsmasq.d/gfwlist.conf << 'EXTRA'
+server=/google.com/10.182.236.180
+server=/youtube.com/10.182.236.180
+server=/ytimg.com/10.182.236.180
+server=/ggpht.com/10.182.236.180
+server=/gstatic.com/10.182.236.180
+server=/googleapis.com/10.182.236.180
+server=/googlevideo.com/10.182.236.180
+server=/gvt1.com/10.182.236.180
+server=/facebook.com/10.182.236.180
+server=/fbcdn.net/10.182.236.180
+server=/twitter.com/10.182.236.180
+server=/x.com/10.182.236.180
+server=/twimg.com/10.182.236.180
+server=/instagram.com/10.182.236.180
+server=/cdninstagram.com/10.182.236.180
+server=/whatsapp.com/10.182.236.180
+server=/telegram.org/10.182.236.180
+server=/t.me/10.182.236.180
+server=/github.com/10.182.236.180
+server=/github.io/10.182.236.180
+server=/githubusercontent.com/10.182.236.180
+server=/githubassets.com/10.182.236.180
+server=/wikipedia.org/10.182.236.180
+server=/wikimedia.org/10.182.236.180
+server=/openai.com/10.182.236.180
+server=/chatgpt.com/10.182.236.180
+server=/cloudflare.com/10.182.236.180
+server=/cdnjs.com/10.182.236.180
+server=/netflix.com/10.182.236.180
+server=/nflxvideo.net/10.182.236.180
+server=/nflximg.net/10.182.236.180
+server=/reddit.com/10.182.236.180
+server=/redditstatic.com/10.182.236.180
+server=/redditmedia.com/10.182.236.180
+server=/discord.com/10.182.236.180
+server=/discordapp.com/10.182.236.180
+server=/slack.com/10.182.236.180
+server=/amazon.com/10.182.236.180
+server=/amazonaws.com/10.182.236.180
+server=/cloudfront.net/10.182.236.180
+server=/azure.com/10.182.236.180
+server=/microsoft.com/10.182.236.180
+server=/bing.com/10.182.236.180
+server=/linkedin.com/10.182.236.180
+server=/medium.com/10.182.236.180
+server=/spotify.com/10.182.236.180
+server=/apple.com/10.182.236.180
+server=/icloud.com/10.182.236.180
+server=/pixiv.net/10.182.236.180
+server=/twitch.tv/10.182.236.180
+server=/twitchcdn.net/10.182.236.180
+server=/v2ex.com/10.182.236.180
+server=/notion.so/10.182.236.180
+server=/notion.site/10.182.236.180
+server=/dropbox.com/10.182.236.180
+server=/zoom.us/10.182.236.180
+server=/docker.com/10.182.236.180
+server=/docker.io/10.182.236.180
+server=/npmjs.com/10.182.236.180
+server=/npmjs.org/10.182.236.180
+server=/pypi.org/10.182.236.180
+server=/stackoverflow.com/10.182.236.180
+EXTRA
+
+    /etc/init.d/dnsmasq restart 2>/dev/null
+    echo 'DNS 分流已配置（gfwlist + 关键域名 -> peer, 其余 -> 114/223）'
+" 2>/dev/null
+echo "[fix-network] DNS 分流已配置 ✓"
+
 echo ""
 echo "[fix-network] 全部完成！"
 echo "              ssh openwrt-qemu"
