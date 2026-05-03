@@ -1862,3 +1862,63 @@ msgstr "确认移除 mynet 防火墙区域？VPN 流量转发将停止工作。"
 #: view/mynet/node.htm
 msgid "node.conf saved, current node set to"
 msgstr "node.conf 已保存，当前节点已设为"
+
+#: view/mynet/proxy.htm
+msgid "Active IP Rules"
+msgstr "活跃 IP 规则"
+
+#: view/mynet/proxy.htm
+msgid "Auto Start"
+msgstr "自动启动"
+
+#: view/mynet/proxy.htm
+msgid "Blacklist (inverted matching)"
+msgstr "黑名单（反转匹配）"
+
+#: view/mynet/proxy.htm
+msgid "Configured CIDRs"
+msgstr "已配置路由段"
+
+#: view/mynet/proxy.htm
+msgid "Foreign DNS Tunnel"
+msgstr "境外 DNS 隧道"
+
+#: view/mynet/proxy.htm
+msgid "Match Policy"
+msgstr "匹配策略"
+
+#: view/mynet/proxy.htm
+msgid "Node Region"
+msgstr "节点区域"
+
+#: view/mynet/proxy.htm
+msgid "Proxy Layers"
+msgstr "代理层状态"
+
+#: view/mynet/proxy.htm
+msgid "Region / DNS Mode"
+msgstr "区域 / DNS 模式"
+
+#: view/mynet/proxy.htm
+msgid "Route Check"
+msgstr "路由检查"
+
+#: view/mynet/proxy.htm
+msgid "Split (GFW list)"
+msgstr "分流（GFW 列表）"
+
+#: view/mynet/proxy.htm
+msgid "Whitelist (forward matching)"
+msgstr "白名单（正向匹配）"
+
+#: view/mynet/proxy.htm
+msgid "Login to your MyNet account to enable and manage plugins."
+msgstr "登录 MyNet 账号以启用和管理插件。"
+
+#: view/mynet/proxy.htm
+msgid "Monitor node status, traffic, and alerts remotely via MyNet cloud."
+msgstr "通过 MyNet 云端远程监控节点状态、流量和告警。"
+
+#: view/mynet/proxy.htm
+msgid "Route traffic through GNB peers with policy-based split and DNS interception."
+msgstr "通过 GNB 对端节点进行基于策略的流量分流和 DNS 拦截。"

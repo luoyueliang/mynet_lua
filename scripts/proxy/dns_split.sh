@@ -92,8 +92,55 @@ cmd_update() {
             echo "[dns-split] ⚠ 使用已有本地 gfwlist.conf (${cnt} 条)"
             return 0
         fi
-        echo "[dns-split] ERROR: 无本地缓存，split DNS 无法配置"
-        return 1
+        # 无本地缓存：生成包含常用域名的最小 gfwlist.conf，代理启动后可通过 Reload 更新
+        echo "[dns-split] ⚠ 无本地缓存，生成内置最小 GFW list（可启动后点击「Reload IP List」更新）"
+        cat > "$GFW_CONF" << MINEOF
+# Auto-generated minimal GFW list (download failed, update via Reload)
+server=/google.com/$foreign_dns
+server=/google.co.jp/$foreign_dns
+server=/googleapis.com/$foreign_dns
+server=/googlevideo.com/$foreign_dns
+server=/gstatic.com/$foreign_dns
+server=/youtube.com/$foreign_dns
+server=/youtu.be/$foreign_dns
+server=/ytimg.com/$foreign_dns
+server=/github.com/$foreign_dns
+server=/githubusercontent.com/$foreign_dns
+server=/github.io/$foreign_dns
+server=/twitter.com/$foreign_dns
+server=/x.com/$foreign_dns
+server=/twimg.com/$foreign_dns
+server=/t.co/$foreign_dns
+server=/facebook.com/$foreign_dns
+server=/instagram.com/$foreign_dns
+server=/fbcdn.net/$foreign_dns
+server=/openai.com/$foreign_dns
+server=/oaistatic.com/$foreign_dns
+server=/oaiusercontent.com/$foreign_dns
+server=/anthropic.com/$foreign_dns
+server=/claude.ai/$foreign_dns
+server=/telegram.org/$foreign_dns
+server=/t.me/$foreign_dns
+server=/whatsapp.com/$foreign_dns
+server=/reddit.com/$foreign_dns
+server=/redd.it/$foreign_dns
+server=/medium.com/$foreign_dns
+server=/netflix.com/$foreign_dns
+server=/nflxvideo.net/$foreign_dns
+server=/spotify.com/$foreign_dns
+server=/dropbox.com/$foreign_dns
+server=/notion.so/$foreign_dns
+server=/slack.com/$foreign_dns
+server=/discord.com/$foreign_dns
+server=/discordapp.com/$foreign_dns
+server=/twitch.tv/$foreign_dns
+server=/steamcommunity.com/$foreign_dns
+server=/steampowered.com/$foreign_dns
+MINEOF
+        local cnt
+        cnt=$(wc -l < "$GFW_CONF")
+        echo "[dns-split] ✓ 内置 GFW list 已生成 (${cnt} 条域名)"
+        return 0
     fi
 
     # 解析 GFW list（内联 Python）
