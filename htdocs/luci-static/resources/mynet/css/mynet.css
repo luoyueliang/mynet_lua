@@ -113,6 +113,10 @@
     background: rgba(251,99,64,.15);
     color: #fb6340;
 }
+.mn-badge-info {
+    background: rgba(94,114,228,.15);
+    color: #5e72e4;
+}
 .mn-badge-local {
     display: inline-block;
     padding: 1px 5px;
