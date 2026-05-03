@@ -40,6 +40,12 @@ ROUTE_CONFIG="${ROUTE_CONFIG:-$MYNET_HOME/conf/proxy/proxy_route.conf}"
 IPSET_NAME="mynet_proxy"
 NFT_SET_NAME="mynet_proxy"
 IP_LIST_FILE="$MYNET_HOME/conf/proxy/proxy_outbound.txt"
+MATCH_MODE="${MATCH_MODE:-normal}"
+DNS_DOMESTIC_SERVER="${DNS_DOMESTIC_SERVER:-223.5.5.5,119.29.29.29}"
+
+# 非国内 DNS 服务器列表由 proxy.lua 运行时注入（唯一真相）
+# 未注入时使用以下 fallback
+FOREIGN_DNS_SERVERS="${FOREIGN_DNS_SERVERS:-8.8.8.8 8.8.4.4 1.1.1.1 1.0.0.1 9.9.9.9 208.67.222.222 208.67.220.220}"
 
 # ─── 共用函数 ───
 
@@ -81,6 +87,132 @@ add_ip_rules() {
     fi
 }
 
+# ─── 修复 WAN 网关路由冲突 ───
+# GNB 可能学到与 WAN 同子网的路由（如 192.168.10.0/24 via gnb_tun），
+# 覆盖 eth1 的直连路由，导致网关不可达。
+# 通过添加 /32 host route 确保网关始终走 WAN 接口。
+fix_wan_gateway_route() {
+    local wan_gw wan_dev
+    wan_gw=$(ip route show default | awk '/dev (eth|wan|ppp)/{print $3; exit}')
+    wan_dev=$(ip route show default | awk '/dev (eth|wan|ppp)/{print $5; exit}')
+    [ -z "$wan_gw" ] || [ -z "$wan_dev" ] && return 0
+
+    # 检查网关是否被 GNB 子网路由覆盖
+    local current_dev
+    current_dev=$(ip route get "$wan_gw" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}')
+    if [ "$current_dev" = "$GNB_INTERFACE" ]; then
+        ip route replace "${wan_gw}/32" dev "$wan_dev" 2>/dev/null
+        echo "[INFO] ✓ 修复 WAN 网关路由: ${wan_gw} → ${wan_dev} (原 ${current_dev})"
+    fi
+}
+
+# ─── 路由非国内 DNS 服务器 ───
+# 该逻辑统一由 proxy.lua (M.route_foreign_dns / M.unroute_foreign_dns) 维护
+# 本脚本不再重复实现,以保证 Lua 与 shell 单一真相
+
+# ─── split DNS 模式（dnsmasq + GFW list 域名分流）───
+# 完全委托给 dns_split.sh —— 本脚本不再保留 inline 实现,避免双源真相
+
+setup_split_dns() {
+    echo "[INFO] 配置 split DNS 模式..."
+    local dns_split_sh="$MYNET_HOME/scripts/proxy/dns_split.sh"
+    if [ ! -f "$dns_split_sh" ]; then
+        echo "[ERROR] dns_split.sh 不存在: $dns_split_sh"
+        return 1
+    fi
+    bash "$dns_split_sh" setup "$DNS_DOMESTIC_SERVER" "${DNS_SERVER:-8.8.8.8}" || {
+        echo "[ERROR] dns_split.sh setup 失败"
+        return 1
+    }
+    echo "[INFO] ✓ split DNS 配置完成"
+}
+
+setup_split_dns_inline() {
+    # 内联配置：直接部署 dnsmasq 分流
+    local domestic_dns
+    domestic_dns=$(echo "$DNS_DOMESTIC_SERVER" | tr ',' ' ')
+    local foreign_dns="${DNS_SERVER:-8.8.8.8}"
+
+    # 配置 dnsmasq 默认上游为国内 DNS
+    uci -q del dhcp.@dnsmasq[0].server || true
+    for dns in $domestic_dns; do
+        uci add_list dhcp.@dnsmasq[0].server="$dns"
+    done
+    uci set dhcp.@dnsmasq[0].noresolv='1'
+    uci -q delete dhcp.@dnsmasq[0].confdir || true
+    uci add_list dhcp.@dnsmasq[0].confdir='/etc/dnsmasq.d'
+    uci commit dhcp
+
+    # 确保 dnsmasq.d 目录存在
+    mkdir -p /etc/dnsmasq.d
+
+    # 下载并解析 GFW list（如果不存在或需要更新）
+    local gfw_conf="/etc/dnsmasq.d/gfwlist.conf"
+    if [ ! -f "$gfw_conf" ] || [ "$(find "$gfw_conf" -mtime +1 2>/dev/null)" ]; then
+        update_gfwlist "$foreign_dns"
+    fi
+
+    # 重启 dnsmasq
+    /etc/init.d/dnsmasq restart 2>/dev/null
+    echo "[INFO] ✓ dnsmasq split DNS 已配置 (国内: $domestic_dns, 国外: $foreign_dns)"
+}
+
+update_gfwlist() {
+    local foreign_dns="${1:-8.8.8.8}"
+    local gfw_conf="/etc/dnsmasq.d/gfwlist.conf"
+    local gfw_tmp="/tmp/gfwlist.txt"
+
+    echo "[INFO] 下载 GFW list..."
+    curl -s --max-time 60 -o "$gfw_tmp" \
+        'https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt' 2>/dev/null
+    if [ ! -s "$gfw_tmp" ]; then
+        curl -s --max-time 60 -o "$gfw_tmp" \
+            'https://ghproxy.net/https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt' 2>/dev/null
+    fi
+    if [ ! -s "$gfw_tmp" ]; then
+        echo "[WARN] GFW list 下载失败，跳过"
+        return 1
+    fi
+
+    # 解析 GFW list（内联 Python）
+    python3 - "$gfw_tmp" "$gfw_conf" "$foreign_dns" << 'PYTHON'
+import base64, re, sys
+
+gfw_file, out_file, dns_server = sys.argv[1], sys.argv[2], sys.argv[3]
+
+with open(gfw_file) as f:
+    text = f.read()
+
+decoded = base64.b64decode(text).decode("utf-8", errors="ignore")
+domains = set()
+
+for line in decoded.split("\n"):
+    line = line.strip()
+    if not line or line[0] in ("!", "@", "["):
+        continue
+    line = line.lstrip("||").lstrip("|").lstrip(".")
+    m = re.match(r"([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}", line)
+    if m:
+        d = m.group(0).lower()
+        if d.endswith(".cn") or d.endswith(".com.cn"):
+            continue
+        parts = d.split(".")
+        for i in range(len(parts) - 1):
+            sub = ".".join(parts[i:])
+            if len(sub.split(".")) >= 2:
+                domains.add(sub)
+
+with open(out_file, "w") as f:
+    for d in sorted(domains):
+        f.write(f"server=/{d}/{dns_server}\n")
+
+print(f"[INFO] GFW list: {len(domains)} domains → {dns_server}")
+PYTHON
+
+    rm -f "$gfw_tmp"
+    echo "[INFO] ✓ GFW list 已更新"
+}
+
 # ─── start ───
 
 start() {
@@ -102,21 +234,32 @@ start() {
 
     add_default_routes
     add_ip_rules
+    fix_wan_gateway_route
 
-    # DNS：仅在 DNS_MODE!=none 时切换 dnsmasq 上游到 peer 的 smartdns
-    # DNS_MODE=none 表示本机已有独立 DNS 方案（如 smartdns/mosdns），不做任何修改
-    if [ "${DNS_MODE:-none}" != "none" ]; then
-        uci -q del dhcp.@dnsmasq[0].server
-        uci add_list dhcp.@dnsmasq[0].server="$PROXY_GATEWAYS"
-        uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
-        echo "[INFO] ✓ dnsmasq 已切换到 smartdns ($PROXY_GATEWAYS via gnb_tun, 国内外分流)"
+    # 非国内 DNS 路由已由 proxy.lua (M.route_foreign_dns) 在调用本脚本后执行，
+    # 此处不重复处理；split DNS 同样委托给 dns_split.sh
 
-        # DNS 劫持：强制所有 LAN DNS 请求走 smartdns（redirect 模式）
-        local _dns_srv="${DNS_SERVER:-$PROXY_GATEWAYS}"
-        [ -n "$_dns_srv" ] && start_dns_intercept "$DNS_MODE" "$_dns_srv"
-    else
-        echo "[INFO] DNS_MODE=none，跳过 dnsmasq upstream 切换（本机 DNS 方案保持不变）"
-    fi
+    # DNS 模式处理
+    case "${DNS_MODE:-none}" in
+        none)
+            echo "[INFO] DNS_MODE=none，跳过 dnsmasq 配置（本机 DNS 方案保持不变）"
+            ;;
+        split)
+            # split 模式：dnsmasq + GFW list 域名分流
+            setup_split_dns
+            ;;
+        redirect|resolv)
+            # 传统模式：dnsmasq 上游切换到 peer smartdns
+            uci -q del dhcp.@dnsmasq[0].server || true
+            uci add_list dhcp.@dnsmasq[0].server="$PROXY_GATEWAYS"
+            uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
+            echo "[INFO] ✓ dnsmasq 已切换到 smartdns ($PROXY_GATEWAYS via gnb_tun)"
+
+            # DNS 劫持（redirect 模式）
+            local _dns_srv="${DNS_SERVER:-$PROXY_GATEWAYS}"
+            [ -n "$_dns_srv" ] && start_dns_intercept "$DNS_MODE" "$_dns_srv"
+            ;;
+    esac
 
     echo "[INFO] ✓ 代理路由已启动"
 }
@@ -144,11 +287,21 @@ start_iptables() {
     rm -f "$temp"
 
     # iptables mangle PREROUTING（排除 VPN 接口入方向，避免回包循环）
-    iptables -w 5 -t mangle -C PREROUTING ! -i "$GNB_INTERFACE" \
-        -m set --match-set $IPSET_NAME dst -j MARK --set-mark "$FWMARK" 2>/dev/null || \
-    iptables -w 5 -t mangle -A PREROUTING ! -i "$GNB_INTERFACE" \
-        -m set --match-set $IPSET_NAME dst -j MARK --set-mark "$FWMARK"
-    echo "[INFO] ✓ iptables mangle 规则已配置"
+    if [ "$MATCH_MODE" = "inverted" ]; then
+        # 反转匹配：非国内 IP 走代理
+        iptables -w 5 -t mangle -C PREROUTING ! -i "$GNB_INTERFACE" \
+            -m set ! --match-set $IPSET_NAME dst -j MARK --set-mark "$FWMARK" 2>/dev/null || \
+        iptables -w 5 -t mangle -A PREROUTING ! -i "$GNB_INTERFACE" \
+            -m set ! --match-set $IPSET_NAME dst -j MARK --set-mark "$FWMARK"
+        echo "[INFO] ✓ iptables mangle 规则已配置（反转匹配: 非国内走代理）"
+    else
+        # 正常匹配
+        iptables -w 5 -t mangle -C PREROUTING ! -i "$GNB_INTERFACE" \
+            -m set --match-set $IPSET_NAME dst -j MARK --set-mark "$FWMARK" 2>/dev/null || \
+        iptables -w 5 -t mangle -A PREROUTING ! -i "$GNB_INTERFACE" \
+            -m set --match-set $IPSET_NAME dst -j MARK --set-mark "$FWMARK"
+        echo "[INFO] ✓ iptables mangle 规则已配置（正常匹配）"
+    fi
 
     # 源地址策略路由（本机流量可选）
     local src_ip
@@ -191,11 +344,23 @@ start_nftables() {
     nft add rule inet mynet_proxy mangle_prerouting \
         iifname != "$GNB_INTERFACE" ip protocol != icmp \
         ct state established,related meta mark set ct mark return
-    nft add rule inet mynet_proxy mangle_prerouting \
-        ip daddr @$NFT_SET_NAME meta mark set "$FWMARK" counter
-    nft add rule inet mynet_proxy mangle_prerouting \
-        ip daddr @$NFT_SET_NAME ct mark set meta mark
-    echo "[INFO] ✓ nft PREROUTING 规则已配置"
+
+    # 根据 MATCH_MODE 决定匹配逻辑
+    if [ "$MATCH_MODE" = "inverted" ]; then
+        # 反转匹配：非国内 IP 走代理（ip daddr != @china_ips → mark）
+        nft add rule inet mynet_proxy mangle_prerouting \
+            ip daddr != @$NFT_SET_NAME meta mark set "$FWMARK" counter
+        nft add rule inet mynet_proxy mangle_prerouting \
+            ip daddr != @$NFT_SET_NAME ct mark set meta mark
+        echo "[INFO] ✓ nft PREROUTING 规则已配置（反转匹配: 非国内走代理）"
+    else
+        # 正常匹配：指定 IP 走代理
+        nft add rule inet mynet_proxy mangle_prerouting \
+            ip daddr @$NFT_SET_NAME meta mark set "$FWMARK" counter
+        nft add rule inet mynet_proxy mangle_prerouting \
+            ip daddr @$NFT_SET_NAME ct mark set meta mark
+        echo "[INFO] ✓ nft PREROUTING 规则已配置（正常匹配）"
+    fi
 }
 
 # ─── server mode ───
@@ -291,7 +456,8 @@ start_dns_intercept() {
         ip route replace "${dns_server}/32" dev "$GNB_INTERFACE" 2>/dev/null && \
             echo "[INFO] DNS 路由: ${dns_server}/32 → $GNB_INTERFACE（非 peer，强制走隧道）"
         # 记录 DNS server，用于 stop 时清理路由
-        echo "$dns_server" > /tmp/.dns_route
+        mkdir -p "$MYNET_HOME/var" 2>/dev/null
+        echo "$dns_server" > "$MYNET_HOME/var/dns_route_pin"
     fi
 
     case "$dns_mode" in
@@ -331,12 +497,13 @@ stop_dns_intercept() {
     echo "[INFO] 停止 DNS 劫持..."
 
     # 清理 DNS 路由（由 start_dns_intercept 添加的）
-    if [ -f /tmp/.dns_route ]; then
+    local _pin_file="$MYNET_HOME/var/dns_route_pin"
+    if [ -f "$_pin_file" ]; then
         local _dns_srv
-        _dns_srv=$(cat /tmp/.dns_route)
+        _dns_srv=$(cat "$_pin_file")
         ip route delete "${_dns_srv}/32" dev "$GNB_INTERFACE" 2>/dev/null && \
             echo "[INFO] 已移除 DNS 路由: ${_dns_srv}/32"
-        rm -f /tmp/.dns_route
+        rm -f "$_pin_file"
     fi
 
     case "${FW_TYPE:-}" in
@@ -357,6 +524,8 @@ stop() {
     echo "[INFO] 停止代理路由..."
     stop_dns_intercept
     stop_server_mode
+
+    # 非国内 DNS 路由由 proxy.lua (M.unroute_foreign_dns) 负责清理，本脚本不重复
 
     case "${FW_TYPE:-}" in
         nftables)
@@ -401,13 +570,32 @@ stop() {
         done
     fi
 
-    # 恢复 dnsmasq：仅在当时切换过（DNS_MODE!=none）才恢复
+    # 恢复 dnsmasq
     if [ "${DNS_MODE:-none}" != "none" ]; then
-        uci -q del dhcp.@dnsmasq[0].server
-        uci add_list dhcp.@dnsmasq[0].server='223.5.5.5'
-        uci add_list dhcp.@dnsmasq[0].server='119.29.29.29'
-        uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
-        echo "[INFO] ✓ dnsmasq 已恢复国内 DNS (223.5.5.5)"
+        # split 模式：委托 dns_split.sh 统一清理（gfwlist.conf / extra-domains.conf / dnsmasq.conf 注入段）
+        if [ "${DNS_MODE}" = "split" ]; then
+            local dns_split_sh="$MYNET_HOME/scripts/proxy/dns_split.sh"
+            if [ -f "$dns_split_sh" ]; then
+                bash "$dns_split_sh" stop 2>/dev/null || true
+            else
+                # 脚本丢失：fallback 仅清理已知文件
+                rm -f /etc/dnsmasq.d/gfwlist.conf /etc/dnsmasq.d/extra-domains.conf 2>/dev/null
+                uci -q delete dhcp.@dnsmasq[0].confdir 2>/dev/null || true
+                uci set dhcp.@dnsmasq[0].noresolv='0' 2>/dev/null || true
+            fi
+        fi
+        # redirect/resolv 模式：恢复 UCI 默认国内 DNS
+        if [ "${DNS_MODE}" = "redirect" ] || [ "${DNS_MODE}" = "resolv" ]; then
+            uci -q del dhcp.@dnsmasq[0].server || true
+            local _restore_dns="${DNS_DOMESTIC_SERVER:-223.5.5.5,119.29.29.29}"
+            IFS=',' read -ra _arr <<< "$_restore_dns"
+            for d in "${_arr[@]}"; do
+                d=$(echo "$d" | xargs)
+                [ -n "$d" ] && uci add_list dhcp.@dnsmasq[0].server="$d"
+            done
+            uci commit dhcp && /etc/init.d/dnsmasq reload 2>/dev/null
+            echo "[INFO] ✓ dnsmasq 已恢复默认 DNS ($_restore_dns)"
+        fi
     else
         echo "[INFO] DNS_MODE=none，跳过 dnsmasq 恢复（本机 DNS 方案保持不变）"
     fi

@@ -62,6 +62,7 @@ define Package/luci-app-mynet/install
 	$(INSTALL_BIN) ./scripts/proxy/hooks/post_start.sh $(1)/etc/mynet/scripts/proxy/hooks/
 	$(INSTALL_BIN) ./scripts/proxy/hooks/stop.sh $(1)/etc/mynet/scripts/proxy/hooks/
 	$(INSTALL_BIN) ./scripts/proxy/route_policy.sh $(1)/etc/mynet/scripts/proxy/
+	$(INSTALL_BIN) ./scripts/proxy/dns_split.sh $(1)/etc/mynet/scripts/proxy/
 
 	# --- Proxy IP sources (bundled default lists, do not overwrite if already exist on device) ---
 	$(INSTALL_DIR) $(1)/etc/mynet/conf/proxy/proxy_sources
@@ -71,6 +72,12 @@ define Package/luci-app-mynet/install
 	[ -f ./root/etc/mynet/conf/proxy/proxy_sources/chinaip.txt ] && \
 		$(INSTALL_DATA) ./root/etc/mynet/conf/proxy/proxy_sources/chinaip.txt \
 			$(1)/etc/mynet/conf/proxy/proxy_sources/ || true
+
+	# --- GFW list (bundled default, do not overwrite if already exist on device) ---
+	$(INSTALL_DIR) $(1)/etc/dnsmasq.d
+	[ -f ./root/etc/dnsmasq.d/gfwlist.conf ] && \
+		$(INSTALL_DATA) ./root/etc/dnsmasq.d/gfwlist.conf \
+			$(1)/etc/dnsmasq.d/ || true
 
 	# --- Runtime scripts: tools (optional diagnostics) ---
 	$(INSTALL_DIR) $(1)/etc/mynet/scripts/tools

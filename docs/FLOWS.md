@@ -155,64 +155,119 @@ flowchart TD
 
 ## 5. 代理分流运行流程（Proxy Traffic Split Flow）
 
-通过 GNB 隧道进行 nftables + 策略路由分流。代理流量**不走内核主路由表**，走 fwmark → ip rule → table 200 → gnb_tun。
+通过 GNB 隧道进行 nftables + 策略路由分流。代理流量**不走内核主路由表**，而是 fwmark → ip rule → table 200 → gnb_tun；同时**所有已知国外 DNS 服务器（8.8.8.8/1.1.1.1/9.9.9.9 等）通过系统 /32 主路由强制走 gnb_tun**，杜绝 DNS 污染。
 
 ```mermaid
 flowchart TD
-    A[用户点击 Enable Proxy] --> B{GNB 正在运行?}
+    A[用户点击 Enable / Start Proxy] --> B{GNB 正在运行?}
     B -- 否 --> C[返回错误: 先启动 GNB]
-    B -- 是 --> D["proxy.start() 读取 proxy_role.conf"]
+    B -- 是 --> D["proxy.start(opts) 读取 proxy_role.conf"]
 
-    D --> D1["参数: mode / region / dns_mode / proxy_peers"]
-    D1 --> D2["更新 proxy_policy_params.env\n写入 DNS_MODE / DNS_SERVER\n（route_policy.sh 读取此文件）"]
+    D --> D1["运行参数<br/>mode: client/server/both<br/>region: domestic/international/non_domestic<br/>dns_mode: none/redirect/resolv/split<br/>dns_server / dns_domestic_server / proxy_peers"]
+    D1 --> D2["update_config() 持久化到 proxy_role.conf"]
 
-    D2 --> E["route_inject()\n在 route.conf 末尾注入 #----proxy begin---- 段\n告诉 GNB 数据层将国际 IP 通过隧道转发"]
+    D2 --> E["route_inject() 向 GNB route.conf 注入 pipe 路由<br/>peer_nid|x.0.0.0|255.0.0.0 (/8)<br/>+ 172.x/192.x 用 /16 跳过私有段<br/>共 ~714 条/peer<br/>告诉 GNB 数据层将公网 IP 通过隧道转发"]
 
-    E --> F["proxy.sh generate\n将 interip.txt / chinaip.txt\n加载到 nft set mynet_proxy（约 17800+ 条目）"]
+    E --> F["proxy.sh generate<br/>读取 interip.txt / chinaip.txt<br/>生成 proxy_route.conf (nft 元素声明)"]
 
-    F --> G["route_policy.sh start\n读取 proxy_policy_params.env"]
+    F --> G["写入 proxy_policy_params.env<br/>FW_TYPE / TABLE_ID=200 / FWMARK=0xc8<br/>NODE_REGION + MATCH_MODE<br/>(non_domestic ⇒ MATCH_MODE=inverted)"]
 
-    G --> G1["ip rule add fwmark 0xc8 lookup table 200\nip route add default via peer_vip dev gnb_tun table 200"]
-    G1 --> G2["nft: mynet_fwd chain\n匹配 dst ∈ mynet_proxy set → meta mark set 0xc8\n仅 FORWARD 链（转发 LAN 流量），不标记 OUTPUT"]
+    G --> H["route_policy.sh start"]
+    H --> H1["ensure_route_table → /etc/iproute2/rt_tables 注册 mynet_proxy"]
+    H1 --> H2["add_default_routes<br/>ip route add default via peer_vip dev gnb_tun table 200<br/>(多 peer 时使用 nexthop 多路径)"]
+    H2 --> H3["add_ip_rules<br/>ip rule add fwmark 0xc8 table 200 prio 31800"]
+    H3 --> H4["fix_wan_gateway_route<br/>WAN 网关 /32 host route → wan dev<br/>(防止 GNB 学到的 /24 覆盖 WAN 直连)"]
 
-    G2 --> G3["切换 dnsmasq upstream → peer_vip:53\n国内/国外智能分流由对端 smartdns 完成\n返回正确 IP → nft set 命中 → 走 gnb_tun"]
+    H4 --> H5{MATCH_MODE?}
+    H5 -- normal --> I1["nft mangle_prerouting<br/>ip daddr @mynet_proxy → mark 0xc8<br/>(命中 IP 集合 ⇒ 走代理)"]
+    H5 -- inverted --> I2["nft mangle_prerouting<br/>ip daddr != @mynet_proxy → mark 0xc8<br/>(未命中国内集合 ⇒ 走代理)"]
 
-    G3 --> H{DNS_MODE?}
-    H -- none --> I[完成\ndnsmasq 负责解析，LAN 客户端 DNS 走 dnsmasq]
-    H -- redirect --> J["nft chain dns_intercept\ntype nat hook prerouting priority dstnat\niifname br-lan udp/tcp dport 53 dnat → peer_vip:53\n（LAN 客户端 DNS 完全绕过 dnsmasq）"]
-    J --> I
+    I1 --> J["route_foreign_dns<br/>ip route replace 8.8.8.8/32 dev gnb_tun<br/>+ 8.8.4.4 / 1.1.1.1 / 1.0.0.1 / 9.9.9.9 / 208.67.x<br/>(/32 优先级高于 /8 GNB 路由,确保 DNS 不被污染)"]
+    I2 --> J
 
-    I --> K[写入 proxy_state.json\nmode / dns_mode / start_ts / region]
-    K --> L[返回 success]
+    J --> K{DNS_MODE?}
+    K -- none --> L1[保持现有 dnsmasq 配置不变]
+    K -- redirect --> L2["nft dns_intercept (nat prerouting dstnat)<br/>iifname br-lan udp/tcp dport 53<br/>dnat → peer_vip:53"]
+    K -- resolv --> L3["改写 /tmp/resolv.conf.d/resolv.conf.auto<br/>nameserver = peer_vip"]
+    K -- split --> L4["dns_split.sh setup<br/>dnsmasq.conf 写入 server=223.5.5.5 (国内)<br/>+ /etc/dnsmasq.d/gfwlist.conf<br/>每条 server=/{domain}/8.8.8.8 (国外域名)<br/>+ extra-domains.conf (npm/docker/openai..)<br/>dnsmasq restart"]
+
+    L1 --> M
+    L2 --> M
+    L3 --> M
+    L4 --> M["proxy_state.json 写入 start_ts / mode / region / dns_mode"]
+    M --> N["register_firewall_include<br/>(防火墙重启自动恢复策略路由)"]
+    N --> O[返回 success]
 
     style A fill:#e8f5e9
     style C fill:#ffebee
-    style L fill:#e8f5e9
+    style J fill:#fff3e0
+    style L4 fill:#e3f2fd
+    style O fill:#e8f5e9
 ```
 
-### DNS 流量路径说明
+### 三种 Region 匹配模式
 
-| 流量来源 | dns_mode=none | dns_mode=redirect |
-|---|---|---|
-| LAN 客户端 DNS | → dnsmasq → peer_vip:53 | DNAT 直接 → peer_vip:53（绕过 dnsmasq） |
-| 路由器自身 DNS | → dnsmasq → peer_vip:53 | → dnsmasq → peer_vip:53（OUTPUT 不被 DNAT） |
-| peer_vip:53 到 9.1 | 直连路由 10.133.245.0/24 dev gnb_tun | 同左（不经过 fwmark 策略路由） |
+| Region | IP 集合数据源 | nft 匹配条件 | 适用场景 |
+|---|---|---|---|
+| `domestic` (默认) | `interip.txt` (国际/海外 IP, ~17000 条) | `ip daddr @set → mark` | 节点在国内,海外流量走 peer |
+| `international` | `chinaip.txt` (国内 IP) | `ip daddr @set → mark` | 节点在海外,国内流量走 peer (回国加速) |
+| `non_domestic` (新) | `chinaip.txt` (国内 IP) | `ip daddr != @set → mark` | **反向放行**: 集合外的所有流量都走代理,适合"全局代理但国内直连"场景 |
+
+### 四种 DNS 模式
+
+| dns_mode | 工作方式 | LAN 客户端 DNS 路径 | 适用场景 |
+|---|---|---|---|
+| `none` | 不修改任何 DNS 配置 | 现有 dnsmasq → 现有上游 | 已有自定义 DNS 方案 |
+| `redirect` | nft DNAT 拦截 br-lan dport 53 | DNAT → peer_vip:53 (绕过 dnsmasq) | 强制使用 peer 的 smartdns |
+| `resolv` | 覆写本机 resolv.conf.auto | LAN 仍走 dnsmasq → peer_vip | 仅修改路由器自身 DNS |
+| `split` (新) | dnsmasq 默认走国内 + GFW list 走国外 | dnsmasq 智能分流 (国内 CDN+海外干净 IP) | **推荐**: 无需 peer smartdns 即可分流 |
+
+### 国外 DNS 服务器系统级路由（始终生效）
+
+无论 `dns_mode` 设置如何,代理 `start()` 时都会执行 `route_foreign_dns`:
+
+```text
+ip route replace 8.8.8.8/32       dev gnb_tun
+ip route replace 8.8.4.4/32       dev gnb_tun
+ip route replace 1.1.1.1/32       dev gnb_tun
+ip route replace 1.0.0.1/32       dev gnb_tun
+ip route replace 9.9.9.9/32       dev gnb_tun
+ip route replace 208.67.222.222/32 dev gnb_tun
+ip route replace 208.67.220.220/32 dev gnb_tun
+```
+
+**作用**: /32 主表路由优先级高于 GNB 注入的 /8,确保任何客户端发往这些公共 DNS 的查询直接通过隧道,**不经过 ISP DNS 拦截/污染**。`stop()` 时通过 `unroute_foreign_dns` 全部撤销。
+
+### DNS 流量路径详细对比
+
+| 流量来源 / dns_mode | none | redirect | resolv | split |
+|---|---|---|---|---|
+| LAN 客户端 → 53 | dnsmasq → 原上游 | DNAT → peer_vip | dnsmasq → peer_vip | dnsmasq 分流 (国内 223.5.5.5 / 国外 8.8.8.8) |
+| 路由器自身 → 53 | dnsmasq → 原上游 | dnsmasq → 原上游 (OUTPUT 不 DNAT) | resolver → peer_vip | dnsmasq 分流 |
+| 客户端直连 8.8.8.8 | /32 主表 → gnb_tun | /32 主表 → gnb_tun | /32 主表 → gnb_tun | /32 主表 → gnb_tun |
 
 ### 代理停止流程
 
 ```mermaid
 flowchart TD
-    A[用户点击 Stop/Disable Proxy] --> B["proxy.stop()"]
-    B --> C["route_policy.sh stop"]
-    C --> C1["flush nft chain mynet_fwd\n删除 fwmark mark 规则"]
-    C1 --> C2["ip rule del fwmark 0xc8\nip route flush table 200"]
-    C2 --> C3{dns_intercept chain 存在?}
-    C3 -- 是 --> C4["flush + delete nft chain dns_intercept"]
-    C3 --> C5
-    C4 --> C5["恢复 dnsmasq: 移除 proxy peer upstream\nuci del dhcp.@dnsmasq[0].server + reload"]
-    C5 --> D["route_restore()\n清除 route.conf 中 #----proxy begin/end---- 段"]
-    D --> E["删除 proxy_state.json"]
-    E --> F[返回 success]
+    A[用户点击 Stop / Disable] --> B["proxy.stop()"]
+    B --> C["unroute_foreign_dns<br/>删除所有 8.8.8.8/32 等主表路由"]
+    C --> D["route_policy.sh stop"]
+    D --> D1["stop_dns_intercept<br/>删除 nft dns_intercept chain<br/>清理 /tmp/.dns_route 临时记录的 DNS /32"]
+    D1 --> D2["stop_server_mode<br/>删除 server_postrouting/forward chain"]
+    D2 --> D3["unroute_foreign_dns (二次保险)"]
+    D3 --> D4["nft delete table inet mynet_proxy<br/>(一次性清掉所有 set/chain)"]
+    D4 --> D5["循环 ip rule del 直到无 lookup mynet_proxy"]
+    D5 --> D6["ip route flush table 200"]
+    D6 --> D7{DNS_MODE?}
+    D7 -- split --> D8["rm /etc/dnsmasq.d/gfwlist.conf<br/>清理 dnsmasq.conf #mynet-dns-split-* 段<br/>恢复 noresolv=0 + 默认国内 DNS"]
+    D7 -- redirect/resolv --> D9["uci 恢复 dhcp.dnsmasq.server=223.5.5.5,119.29.29.29"]
+    D7 -- none --> D10[跳过 dnsmasq 恢复]
+    D8 --> E
+    D9 --> E
+    D10 --> E["proxy.route_restore()<br/>strip GNB route.conf 中的 #----proxy start/end---- 段<br/>(含 proxy-server 段)"]
+    E --> F["rm proxy_state.json<br/>uci delete firewall.mynet_proxy include"]
+    F --> G[返回 success]
 ```
 
 ---

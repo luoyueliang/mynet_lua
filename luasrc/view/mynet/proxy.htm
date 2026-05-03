@@ -95,8 +95,9 @@ local cur_nid = cur_node_id
             <th class="th"><%:Region%></th>
             <td class="td">
                 <select id="mn-cfg-region" class="cbi-input-select" style="width:auto">
-                    <option value="domestic"      <%=cfg.node_region=='domestic'      and 'selected' or ''%>><%:Domestic%></option>
-                    <option value="international" <%=cfg.node_region=='international' and 'selected' or ''%>><%:International%></option>
+                    <option value="domestic"      <%=cfg.node_region=='domestic'      and 'selected' or ''%>><%:Domestic%> (interip.txt)</option>
+                    <option value="international" <%=cfg.node_region=='international' and 'selected' or ''%>><%:International%> (chinaip.txt)</option>
+                    <option value="non_domestic"  <%=cfg.node_region=='non_domestic'  and 'selected' or ''%>><%:Non-Domestic%> (!chinaip.txt)</option>
                 </select>
             </td>
         </tr>
@@ -108,6 +109,7 @@ local cur_nid = cur_node_id
                     <option value="none"     <%=cfg.dns_mode=='none'     and 'selected' or ''%>><%:None%></option>
                     <option value="redirect" <%=cfg.dns_mode=='redirect' and 'selected' or ''%>><%:Redirect (DNAT)%></option>
                     <option value="resolv"   <%=cfg.dns_mode=='resolv'   and 'selected' or ''%>><%:Resolv.conf%></option>
+                    <option value="split"    <%=cfg.dns_mode=='split'    and 'selected' or ''%>><%:Split%> (GFW list)</option>
                 </select>
             </td>
         </tr>

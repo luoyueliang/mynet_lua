@@ -85,6 +85,8 @@ build_ipk() {
     #   proxy/openwrt/route_policy.sh -- 兼容旧版路径
     install -m 0755 "$PROJECT_DIR/scripts/proxy/route_policy.sh" \
         "$data_dir/etc/mynet/scripts/proxy/route_policy.sh"
+    install -m 0755 "$PROJECT_DIR/scripts/proxy/dns_split.sh" \
+        "$data_dir/etc/mynet/scripts/proxy/dns_split.sh"
     install -d "$data_dir/etc/mynet/scripts/proxy/openwrt"
     install -m 0755 "$PROJECT_DIR/scripts/proxy/route_policy.sh" \
         "$data_dir/etc/mynet/scripts/proxy/openwrt/"
@@ -97,6 +99,11 @@ build_ipk() {
         "$data_dir/etc/mynet/scripts/tools/"
     install -m 0755 "$PROJECT_DIR/scripts/tools/optimize_gnb_conntrack.sh" \
         "$data_dir/etc/mynet/scripts/tools/"
+
+    # --- Pre-bundled gfwlist (fallback when download fails on first run) ---
+    install -d "$data_dir/etc/dnsmasq.d"
+    install -m 0644 "$PROJECT_DIR/root/etc/dnsmasq.d/gfwlist.conf" \
+        "$data_dir/etc/dnsmasq.d/"
 
     # --- curl TLS fix ---
     install -d "$data_dir/usr/sbin"
@@ -111,6 +118,7 @@ build_ipk() {
 
     # --- Runtime directories ---
     install -d "$data_dir/etc/mynet/logs"
+    install -d "$data_dir/etc/mynet/var/logs"
     install -d "$data_dir/etc/mynet/driver/gnb"
 
     # --- i18n translations (.po → .lmo) ---
@@ -244,6 +252,13 @@ quick_sync() {
         ssh_put "$lmo_tmp" "/usr/lib/lua/luci/i18n/mynet.${lang}.lmo"
         rm -f "$lmo_tmp"
     done
+
+    ssh_put "$PROJECT_DIR/scripts/proxy/route_policy.sh" \
+            "/etc/mynet/scripts/proxy/route_policy.sh"
+    ssh_put "$PROJECT_DIR/scripts/proxy/dns_split.sh" \
+            "/etc/mynet/scripts/proxy/dns_split.sh"
+    ssh_put "$PROJECT_DIR/root/etc/dnsmasq.d/gfwlist.conf" \
+            "/etc/dnsmasq.d/gfwlist.conf"
 
     ssh $SSH_OPTS $ROUTER "rm -rf /tmp/luci-*"
     echo "[quick] 完成"

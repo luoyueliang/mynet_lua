@@ -18,8 +18,22 @@ local PROXY_STATE_FILE = util.MYNET_HOME .. "/var/proxy_state.json"
 
 -- 参数校验常量（controller/model 共用，避免重复定义）
 local VALID_MODES   = { client = true, server = true, both = true }
-local VALID_REGIONS = { domestic = true, international = true }
-local VALID_DNS     = { none = true, redirect = true, resolv = true }
+local VALID_REGIONS = { domestic = true, international = true, non_domestic = true }
+local VALID_DNS     = { none = true, redirect = true, resolv = true, split = true }
+
+-- 非国内 DNS 服务器列表（始终通过 proxy_peer 路由）
+M.FOREIGN_DNS_SERVERS = {
+    "8.8.8.8",      -- Google DNS
+    "8.8.4.4",      -- Google DNS secondary
+    "1.1.1.1",      -- Cloudflare DNS
+    "1.0.0.1",      -- Cloudflare DNS secondary
+    "9.9.9.9",      -- Quad9 DNS
+    "208.67.222.222", -- OpenDNS
+    "208.67.220.220", -- OpenDNS secondary
+}
+
+-- 国内 DNS 服务器（split 模式默认）
+M.DOMESTIC_DNS_SERVERS = { "223.5.5.5", "119.29.29.29" }
 
 -- ─────────────────────────────────────────────────────────────
 -- 配置读写
@@ -52,12 +66,13 @@ function M.load_config()
     local result = util.parse_bash_conf(PROXY_ROLE_CONF, { lower_keys = true })
     if not result then return defaults end
     return {
-        proxy_enabled = (result.proxy_enabled == "1" or result.proxy_enabled == "true"),
-        proxy_mode    = result.proxy_mode  or "client",
-        node_region   = result.node_region or "domestic",
-        dns_mode      = result.dns_mode    or "none",
-        dns_server    = result.dns_server  or "",
-        proxy_peers   = result.proxy_peers or "",
+        proxy_enabled        = (result.proxy_enabled == "1" or result.proxy_enabled == "true"),
+        proxy_mode           = result.proxy_mode  or "client",
+        node_region          = result.node_region or "domestic",
+        dns_mode             = result.dns_mode    or "none",
+        dns_server           = result.dns_server  or "",
+        dns_domestic_server  = result.dns_domestic_server or "",
+        proxy_peers          = result.proxy_peers or "",
     }
 end
 
@@ -79,9 +94,21 @@ function M.save_config(opts)
         'NODE_REGION="'   .. (opts.node_region or "domestic")  .. '"',
         'DNS_MODE="'      .. (opts.dns_mode    or "none")      .. '"',
         'DNS_SERVER="'    .. (opts.dns_server  or "")          .. '"',
+        'DNS_DOMESTIC_SERVER="' .. (opts.dns_domestic_server or "") .. '"',
         'PROXY_PEERS="'   .. (opts.proxy_peers or "")          .. '"',
     }
     return util.write_file(PROXY_ROLE_CONF, table.concat(lines, "\n") .. "\n")
+end
+
+-- 写入 / 更新 proxy_policy_params.env 中的 KEY="VALUE" 字段（保留其它行）
+-- 用于 Lua 向 shell 注入运行参数（FOREIGN_DNS_SERVERS / DNS_DOMESTIC_SERVER 等）
+local function _upsert_env(content, key, value)
+    local pat = key .. '="[^"]*"'
+    if content:find(pat) then
+        return (content:gsub(pat, key .. '="' .. value .. '"'))
+    end
+    if content ~= "" and not content:match("\n$") then content = content .. "\n" end
+    return content .. key .. '="' .. value .. '"\n'
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -169,15 +196,33 @@ function M.get_status()
     -- route 注入状态（从 route.conf marker 推断，而非硬编码 false）
     local inj_status = M.route_inject_status() or {}
 
+    -- 国外 DNS 是否已被引入 GNB 隧道（检测首个服务器作为样本）
+    local foreign_dns_routed = false
+    if #M.FOREIGN_DNS_SERVERS > 0 then
+        local sample = M.FOREIGN_DNS_SERVERS[1]
+        local rg = util.exec("ip route get " .. sample .. " 2>/dev/null | head -1") or ""
+        local cfg_m_local = require("luci.model.mynet.config")
+        local iface = cfg_m_local.get_vpn_interface()
+        if iface and rg:find("dev " .. iface, 1, true) then
+            foreign_dns_routed = true
+        end
+    end
+
+    -- 匹配模式
+    local match_mode = "normal"
+    if cfg.node_region == "non_domestic" then match_mode = "inverted" end
+
     return {
         running         = running,
         mode            = cfg.proxy_mode,
         region          = cfg.node_region,
+        match_mode      = match_mode,
         dns_mode        = cfg.dns_mode,
         layers          = {
-            route_inject    = inj_status.injected and true or false,
-            policy_routing  = running,
-            dns_intercept   = cfg.dns_mode ~= "none" and running,
+            route_inject       = inj_status.injected and true or false,
+            policy_routing     = running,
+            dns_intercept      = cfg.dns_mode ~= "none" and running,
+            foreign_dns_routed = foreign_dns_routed,
         },
         stats           = {
             ipset_count      = ipset_count,
@@ -199,6 +244,10 @@ end
 
 function M.enable(opts)
     opts = opts or {}
+    -- 校验参数（避免非法 dns_mode/region/mode 写入 conf）
+    local v_ok, v_err = M.validate_params(opts)
+    if not v_ok then return nil, v_err end
+
     local fields = { proxy_enabled = true }
     if opts.mode        then fields.proxy_mode  = opts.mode end
     if opts.region      then fields.node_region  = opts.region end
@@ -298,6 +347,7 @@ function M.start(opts)
 
     -- 保存运行参数（不改 proxy_enabled）
     local fields = { proxy_mode = mode, node_region = region, dns_mode = dns_mode, dns_server = dns_server }
+    if opts.dns_domestic_server then fields.dns_domestic_server = opts.dns_domestic_server end
     if opts.proxy_peers then fields.proxy_peers  = opts.proxy_peers end
     M.update_config(fields)
 
@@ -326,11 +376,20 @@ function M.start(opts)
     -- 必须在 proxy.sh generate 之后，因为网关 IP 从 proxy_route.conf 中读取
     local params_file = util.MYNET_HOME .. "/var/proxy_policy_params.env"
     util.ensure_dir(util.MYNET_HOME .. "/var")
+    -- 由 Lua 持有的 DNS 常量（单一真相，不依赖 shell 端硬编码）
+    local foreign_dns_str  = table.concat(M.FOREIGN_DNS_SERVERS, " ")
+    local domestic_dns_str = opts.dns_domestic_server
+        or table.concat(M.DOMESTIC_DNS_SERVERS, ",")
+    local match_mode = (region == "non_domestic") and "inverted" or "normal"
     if util.file_exists(params_file) then
         -- 仅更新动态字段，保留其他已有字段（如 FW_TYPE/GNB_INTERFACE）
         local pdata = util.read_file(params_file) or ""
-        pdata = pdata:gsub('DNS_MODE="[^"]*"', 'DNS_MODE="' .. dns_mode .. '"')
-        pdata = pdata:gsub('DNS_SERVER="[^"]*"', 'DNS_SERVER="' .. dns_server .. '"')
+        pdata = _upsert_env(pdata, "NODE_REGION",         region)
+        pdata = _upsert_env(pdata, "MATCH_MODE",          match_mode)
+        pdata = _upsert_env(pdata, "DNS_MODE",            dns_mode)
+        pdata = _upsert_env(pdata, "DNS_SERVER",          dns_server)
+        pdata = _upsert_env(pdata, "DNS_DOMESTIC_SERVER", domestic_dns_str)
+        pdata = _upsert_env(pdata, "FOREIGN_DNS_SERVERS", foreign_dns_str)
         util.write_file(params_file, pdata)
     else
         -- 首次创建：从 proxy_route.conf 读取网关，从系统检测防火墙类型
@@ -352,8 +411,12 @@ function M.start(opts)
             "GNB_INTERFACE=" .. gnb_iface,
             "PROXY_GATEWAYS=" .. gateway,
             'PROXY_MODE="' .. mode .. '"',
+            'NODE_REGION="' .. region .. '"',
+            'MATCH_MODE="' .. match_mode .. '"',
             'DNS_MODE="' .. dns_mode .. '"',
             'DNS_SERVER="' .. dns_server .. '"',
+            'DNS_DOMESTIC_SERVER="' .. domestic_dns_str .. '"',
+            'FOREIGN_DNS_SERVERS="' .. foreign_dns_str .. '"',
             'ROUTE_CONFIG="' .. PROXY_CONF_DIR .. '/proxy_route.conf"',
         }
         util.write_file(params_file, table.concat(lines, "\n") .. "\n")
@@ -379,7 +442,49 @@ function M.start(opts)
     -- 注册防火墙 include（防火墙重启后恢复策略路由）
     M.register_firewall_include()
 
+    -- 始终路由非国内 DNS 服务器到 GNB 隧道
+    M.route_foreign_dns()
+
     return true, util.trim(out or "started")
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- 路由非国内 DNS 服务器到 GNB 隧道（始终生效，无论代理/DNS 模式）
+-- 本函数为唯一执行点，route_policy.sh 不再重复处理
+-- ─────────────────────────────────────────────────────────────
+
+function M.route_foreign_dns(gnb_interface)
+    if not gnb_interface or gnb_interface == "" then
+        local cfg_m = require("luci.model.mynet.config")
+        gnb_interface = cfg_m.get_vpn_interface()
+    end
+    if not gnb_interface then return nil, "GNB interface not found" end
+
+    local routed, verified = 0, 0
+    for _, dns_ip in ipairs(M.FOREIGN_DNS_SERVERS) do
+        local ok = util.exec("ip route replace " .. dns_ip .. "/32 dev "
+            .. util.shell_escape(gnb_interface) .. " 2>/dev/null && echo ok || echo fail")
+        if ok:find("ok") then
+            routed = routed + 1
+            -- 验证实际出入接口是否为隐道（GNB 未起时会 fallback 到默认路由）
+            local route_get = util.exec("ip route get " .. dns_ip
+                .. " 2>/dev/null | head -1") or ""
+            if route_get:find("dev " .. gnb_interface, 1, true) then
+                verified = verified + 1
+            end
+        end
+    end
+    util.log_info(string.format(
+        "route_foreign_dns: routed=%d/%d verified=%d via %s",
+        routed, #M.FOREIGN_DNS_SERVERS, verified, gnb_interface))
+    return { routed = routed, verified = verified, total = #M.FOREIGN_DNS_SERVERS }, nil
+end
+
+function M.unroute_foreign_dns()
+    for _, dns_ip in ipairs(M.FOREIGN_DNS_SERVERS) do
+        util.exec("ip route delete " .. dns_ip .. "/32 2>/dev/null || true")
+    end
+    util.log_info("unroute_foreign_dns: cleaned")
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -390,6 +495,10 @@ function M.stop()
     if not util.file_exists(ROUTE_POLICY_SH) then
         return nil, "route_policy.sh not found"
     end
+
+    -- 清理非国内 DNS 路由
+    M.unroute_foreign_dns()
+
     local out, code = util.exec_status(
         "MYNET_HOME=" .. util.shell_escape(util.MYNET_HOME)
         .. " bash " .. util.shell_escape(ROUTE_POLICY_SH) .. " stop 2>&1")
